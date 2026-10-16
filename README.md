@@ -7,9 +7,9 @@ Reto: 0
 
 ## Equipo
 
-- Integrante 1
-- Integrante 2
-- Integrante 3
+- Victor David Montes (@VITIDEV06)
+- Frida Leis (@yukki2126)
+- Yohany Kavacila (@YOHADEV21)
 
 ## Problema
 
