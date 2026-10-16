@@ -1,4 +1,4 @@
-# Nombre del proyecto
+#        HIDRA
 
 <!-- Cambia el 0 por el número de su reto y deja la línea tal cual ("Reto: N"):
        1 = Agua · 2 = Educación · 3 = Empleabilidad
