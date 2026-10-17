@@ -42,6 +42,8 @@ from services.auth import Actor, ErrorAutenticacion, ErrorAutorizacion, Rol
 from services.limites import ErrorLimite
 from services.workflow import ErrorDeNegocio
 
+config.exigir_persistencia_produccion()  # falla al arrancar si producción no tiene DATABASE_URL
+
 app = FastAPI(title="HIDRO360 - API", version=SCHEMA_VERSION,
               docs_url=None if config.ENTORNO() == "prod" else "/docs",
               redoc_url=None, openapi_url=None if config.ENTORNO() == "prod" else "/openapi.json")

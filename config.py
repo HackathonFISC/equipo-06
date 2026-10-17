@@ -169,3 +169,12 @@ TELEGRAM_VENTANA_S = int(os.environ.get("HIDRO360_TELEGRAM_VENTANA_S", "").strip
 TELEGRAM_MAX_TEXTO = 4000          # igual que el limite de crear_reporte
 # URL publica de la app (para mensajes/enlaces; no es un secreto). Vacia en local.
 PUBLIC_APP_URL = lambda: _env("PUBLIC_APP_URL").rstrip("/")  # noqa: E731
+
+
+def exigir_persistencia_produccion() -> None:
+    """En Vercel o con HIDRO360_ENV=prod la base DEBE ser PostgreSQL/Supabase: el disco de una función es efímero y
+    un SQLite silencioso perdería reportes, sesiones y misiones. Se falla al arrancar en vez de degradar."""
+    en_produccion = bool(os.environ.get("VERCEL")) or ENTORNO() == "prod"
+    if en_produccion and not modo_postgres():
+        raise RuntimeError("Falta DATABASE_URL: en producción HIDRO360 necesita PostgreSQL/Supabase; "
+                           "no arranca con SQLite temporal.")
