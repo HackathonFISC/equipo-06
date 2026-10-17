@@ -1,6 +1,6 @@
 # Resultados de evaluación — HIDRO360
 
-Generado: 2026-10-17T04:50:04 · versión 0.6.0 · reglas `reglas-2026.10.a`
+Generado: 2026-10-17T05:59:42 · versión 0.6.0 · reglas `reglas-2026.10.a`
 Comando: `python -m evaluation.run_cases` (base y trazas temporales; intérprete por reglas; sin red).
 
 > **Procedencia de los casos.** La guía oficial (Guía de Programación, p. 8) solo define los 15 casos por

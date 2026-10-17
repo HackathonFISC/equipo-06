@@ -1,5 +1,5 @@
 {
-  "generado": "2026-10-17T04:50:04",
+  "generado": "2026-10-17T05:59:42",
   "version": "0.6.0",
   "indicadores": {
     "Campos clave correctamente extraídos (C01-C04)": "16/16 (100%)",
@@ -25,7 +25,7 @@
           "personas": true,
           "severidad": true
         },
-        "segundos": 0.69,
+        "segundos": 0.4,
         "oficial": true
       }
     },
@@ -45,7 +45,7 @@
           "personas": true,
           "severidad": true
         },
-        "segundos": 1.4,
+        "segundos": 0.44,
         "oficial": true
       }
     },
@@ -65,7 +65,7 @@
           "personas": true,
           "severidad": true
         },
-        "segundos": 0.55,
+        "segundos": 0.31,
         "oficial": true
       }
     },
@@ -85,7 +85,7 @@
           "personas": true,
           "severidad": true
         },
-        "segundos": 0.55,
+        "segundos": 0.35,
         "oficial": true
       }
     },
@@ -100,7 +100,7 @@
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
         "duplicado_correcto": true,
-        "segundos": 3.91,
+        "segundos": 0.37,
         "oficial": true
       }
     },
@@ -115,7 +115,7 @@
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
         "falso_agrupamiento": false,
-        "segundos": 3.18,
+        "segundos": 0.4,
         "oficial": true
       }
     },
@@ -130,7 +130,7 @@
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
         "ubicacion_no_inventada": true,
-        "segundos": 2.96,
+        "segundos": 0.37,
         "oficial": true
       }
     },
@@ -144,7 +144,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 3.01,
+        "segundos": 0.49,
         "oficial": true
       }
     },
@@ -158,7 +158,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 2.89,
+        "segundos": 0.49,
         "oficial": true
       }
     },
@@ -172,7 +172,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 3.11,
+        "segundos": 0.47,
         "oficial": true
       }
     },
@@ -186,7 +186,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 10.35,
+        "segundos": 1.11,
         "oficial": true
       }
     },
@@ -201,7 +201,7 @@
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
         "capacidad_respetada": true,
-        "segundos": 3.05,
+        "segundos": 0.64,
         "oficial": true
       }
     },
@@ -216,7 +216,7 @@
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
         "capacidad_respetada": true,
-        "segundos": 1.1,
+        "segundos": 0.69,
         "oficial": true
       }
     },
@@ -230,7 +230,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 3.0,
+        "segundos": 0.53,
         "oficial": true
       }
     },
@@ -246,7 +246,7 @@
       "metricas": {
         "decisiones_con_registro": 1,
         "decisiones_totales": 1,
-        "segundos": 1.07,
+        "segundos": 0.48,
         "oficial": true
       }
     },
@@ -260,7 +260,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.48,
+        "segundos": 0.36,
         "oficial": false
       }
     },
@@ -274,7 +274,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.46,
+        "segundos": 0.34,
         "oficial": false
       }
     },
@@ -288,7 +288,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.59,
+        "segundos": 0.43,
         "oficial": false
       }
     },
@@ -302,7 +302,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.74,
+        "segundos": 0.47,
         "oficial": false
       }
     },
@@ -316,7 +316,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.61,
+        "segundos": 0.43,
         "oficial": false
       }
     },
@@ -330,7 +330,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.49,
+        "segundos": 0.37,
         "oficial": false
       }
     },
@@ -344,7 +344,7 @@
       "estado": "PASS",
       "explicacion": "Todos los criterios se cumplen.",
       "metricas": {
-        "segundos": 0.48,
+        "segundos": 0.4,
         "oficial": false
       }
     }

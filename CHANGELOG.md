@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.6.1 — 2026-10-17 (entrega HIDRA — Reto 01: documentación y limpieza)
+### Añadido
+- `README.md` reescrito con las secciones de la entrega (equipo, problema, impacto, arquitectura de agentes, tecnologías, instalación, evals, robustez, bitácora, demo, estado Supabase/Vercel/ESP32 y limitaciones). Aclara que **HIDRO360** es el producto y **HIDRA — Reto 01** la entrega.
+- `docs/ARQUITECTURA.md`: **arquitectura de 8 roles** (ingesta; interpretación local/Gemini + fallback; sector y duplicados; priorización determinista; planificador; orquestador de recomendaciones; supervisor humano; terminal ESP32-S3) con entrada/salida/herramientas/autonomía/guardrails/límites/aprobación humana y diagrama Mermaid.
+- `docs/BITACORA_IA.md` (bitácora de uso de IA con tabla de decisiones), `docs/GUIA_DEMO_EN_VIVO.md` (demo de 5–7 min en 8 pasos + plan B offline), `docs/INVENTARIO_TECNICO.md` (inventario con decisiones y evidencia) y `docs/IMPLEMENTACIONES_EJEMPLO.md` (análisis del laboratorio: **documentar, no integrar**).
+### Cambiado
+- Estado de **Gemini** reconciliado: verificado contra el servicio real el 2026-10-17 (`docs/IA_GEMINI.md`); se corrigieron las afirmaciones «no probado» en `README.md`, `AGENTS.md` y `docs/PRUEBAS.md`.
+- `docs/PRUEBAS.md` actualizado: 19 archivos de prueba (antes 6) y resultados de la entrega (`pytest`: 638 passed, 46 skipped; `run_cases`: 22 PASS, 0 FAIL).
+- `.tools/` (1499 archivos, ≈ 97 MB de `node_modules` de `embedded-postgres`) **retirado del control de versiones** con `git rm -r --cached .tools`; se conserva en disco y `.gitignore` ya lo excluía. Las instrucciones (`scripts/postgres_prueba.py`, `docs/BASE_DE_DATOS.md`) siguen válidas (se reinstala con `npm install`).
+- Referencias a carpetas inexistentes (`LOGO/`, `PROTOTIPO/`) corregidas en `README.md` y `AGENTS.md`.
+### Conocido
+- Sin cambios en las limitaciones: hardware sin probar en placa, Raspberry sin probar, Supabase/Vercel sin desplegar, datos de la demo ficticios.
+
 ## 0.6.0 — 2026-10-17 (MVP integrado: fotos, mapa, IA orquestada, flota)
 ### Añadido
 - Reportes con **coordenadas reales** (mapa) y hasta 3 **fotos** validadas por firma binaria, guardadas en `HIDRO360_MEDIA_DIR` (fuera de Git); solo el administrador las ve.
@@ -31,7 +44,7 @@
 ### Cambiado
 - La evaluación funcional fuerza el intérprete local determinista: ya no depende de una clave Gemini configurada en el entorno de quien la ejecuta ni envía sus casos a la red.
 - Identidad unificada a HIDRO360: documentación, skills (`.claude/skills/hidro360-*`), servicios systemd (`hidro360-api.service`, `hidro360-ui.service`; rutas `/opt/hidro360`, `/etc/hidro360`, `/var/lib/hidro360`, usuario `hidro360`). Las variables de entorno conservan el prefijo `AGUA_CLARA_` por compatibilidad.
-- Firmware ESP32-S3: texto en pantalla HIDRO360; los fallos al confirmar recepción ya no muestran «SIN DATOS» (aviso aparte); `setConnectTimeout`; comprobación de `http.begin`. Sigue sin compilarse ni probarse en placa.
+- Firmware ESP32-S3: texto en pantalla HIDRO360; los fallos al confirmar recepción ya no muestran «SIN DATOS» (aviso aparte); `setConnectTimeout`; comprobación de `http.begin`. **Compila** (ver `docs/HARDWARE.md` §6.3); sigue **sin probarse en placa**.
 - `docs/HARDWARE.md`: tabla de pines con fuentes; pines libres marcados «no verificado» donde no hay evidencia.
 
 ## 0.4.0 — 2026-10-16

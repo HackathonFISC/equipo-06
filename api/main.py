@@ -6,12 +6,12 @@ Iniciar:  uvicorn api.main:app --port 8000      Documentación interactiva: /doc
 
 AUTENTICACIÓN Y ROLES
   - Administración (todo salvo lo listado abajo): `Authorization: Bearer <token de sesión>` (de POST /auth/login,
-    rol administrador) o el token de servicio `X-API-Token` (= AGUA_CLARA_API_TOKEN; actor «api-operador»,
+    rol administrador) o el token de servicio `X-API-Token` (= HIDRO360_API_TOKEN; alias obsoleto AGUA_CLARA_API_TOKEN; actor «api-operador»,
     rol administrador, origen «servicio»). Sin credenciales → 401; sesión con rol `usuario` → 403.
-    Si AGUA_CLARA_API_TOKEN no está configurado, el token de servicio no existe: NO hay acceso administrativo
+    Si HIDRO360_API_TOKEN no está configurado, el token de servicio no existe: NO hay acceso administrativo
     implícito por ser localhost (el login por sesión es la vía).
   - Dispositivos: `GET /estado` y `POST /dispositivos/confirmaciones` con `X-API-Token` = token de servicio o de
-    dispositivo (AGUA_CLARA_DEVICE_TOKEN). Sin ningún token configurado solo se aceptan peticiones de la propia
+    dispositivo (HIDRO360_DEVICE_TOKEN; alias obsoleto AGUA_CLARA_DEVICE_TOKEN). Sin ningún token configurado solo se aceptan peticiones de la propia
     máquina. Un token de dispositivo NO sirve en endpoints administrativos.
   - Terminales por vehículo (ESP32-S3): `X-Device-Token` (token propio de la cisterna, solo se guarda su SHA-256) en
     /dispositivo/mision, /dispositivo/eventos y /dispositivo/latido. La identidad (cisterna_id) sale del token, nunca del

@@ -140,7 +140,7 @@ Archivos en `deploy/raspberry/`: `install.sh`, `hidro360-api.service`, `hidro360
 sudo apt update && sudo apt install -y git python3-venv python3-pip
 git clone <repo> /opt/hidro360 && cd /opt/hidro360
 sudo bash deploy/raspberry/install.sh        # crea usuario, venv, dependencias, /etc/hidro360/hidro360.env y servicios
-sudo nano /etc/hidro360/hidro360.env     # fije AGUA_CLARA_API_TOKEN y AGUA_CLARA_DEVICE_TOKEN
+sudo nano /etc/hidro360/hidro360.env     # fije HIDRO360_API_TOKEN y HIDRO360_DEVICE_TOKEN
 sudo systemctl enable --now hidro360-api hidro360-ui
 bash deploy/raspberry/healthcheck.sh
 ```

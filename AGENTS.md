@@ -29,8 +29,8 @@ api/main.py          API FastAPI (dispositivos, integraciones) ──┤──�
                                               └──►  data/database.py (SQLite stdlib, transacciones)
 models/schemas.py   contratos Pydantic (SCHEMA_VERSION)        config.py   parámetros y variables de entorno
 evaluation/         runner de casos, experimento de impacto     scripts/    utilidades (verificar_gemini)
-firmware/           ESP32-S3 (sin compilar ni probar)           deploy/raspberry/  servicios systemd (sin probar)
-assets/logo.jpeg    logo (original en LOGO/)                    PROTOTIPO/  referencia visual HTML
+firmware/           ESP32-S3 (compila; sin probar en placa)     deploy/raspberry/  servicios systemd (sin probar)
+assets/logo.jpeg    logo                                       proyecto_info/  documentos de origen del reto (PDF)
 ```
 - **UI → `Ctx.ejecutar()` → `services.workflow`**. Las páginas (`interface/flet_app/portal/` y `interface/flet_app/admin/`, cada una con `build(ctx)`) no tocan SQLite ni calculan reglas.
 - **La UI llama a `workflow` en el mismo proceso** (no por HTTP): la API es para dispositivos e integraciones; ambas comparten la misma lógica.
@@ -89,4 +89,4 @@ Python 3.10+; tipado con Pydantic; nombres de dominio en español; docstrings qu
 `pytest -q` verde · `python -m evaluation.run_cases` sin FAIL · demo reproducible desde base vacía (`python app.py` → «Cargar datos de ejemplo») · modo local funciona sin Gemini · ningún secreto en Git (`git ls-files | findstr .env`) · docs coinciden con el comportamiento · lo no probado (hardware, Gemini real, escritorio en otros SO) está marcado como pendiente.
 
 ## 15. Limitaciones conocidas
-Sesiones, bloqueos y límites de tasa en memoria; sin HTTPS, MFA ni gestión de cuentas en la interfaz · Gemini no probado contra el servicio real (sin clave en el desarrollo) · la app de escritorio descarga su cliente una vez (necesita internet la 1.ª vez) · modo `--web` necesita internet en el navegador (CanvasKit/fuentes) · firmware ESP32-S3 sin compilar ni probar en placa · Raspberry sin probar · extracción por regex limitada · casos de evaluación redactados por el equipo (la guía no los enumera) · el modelo `gemini-3.5-flash-lite` por defecto se tomó de la documentación consultada el 2026-10-16: verifíquelo con `scripts.verificar_gemini`.
+Sesiones, bloqueos y límites de tasa en memoria; sin HTTPS, MFA ni gestión de cuentas en la interfaz · Gemini verificado contra el servicio real el 2026-10-17 (ver `docs/IA_GEMINI.md`); las pruebas automáticas usan cliente simulado · la app de escritorio descarga su cliente una vez (necesita internet la 1.ª vez) · modo `--web` necesita internet en el navegador (CanvasKit/fuentes) · firmware ESP32-S3 compilado pero sin probar en placa · Raspberry sin probar · extracción por regex limitada · casos de evaluación redactados por el equipo (la guía no los enumera) · el modelo `gemini-3.5-flash-lite` por defecto se tomó de la documentación consultada el 2026-10-16: verifíquelo con `scripts.verificar_gemini`.

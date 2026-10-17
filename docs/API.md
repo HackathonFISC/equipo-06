@@ -7,8 +7,8 @@ Código: `api/main.py` (capa fina sobre `services/workflow.py`). Documentación 
 |---|---|---|
 | Sesión de usuario (`HIDRO360_AUTH=local`, por defecto) | `Authorization: Bearer <token>` (de `POST /auth/login`) | administración (rol `administrador`) |
 | JWT de Supabase Auth (`HIDRO360_AUTH=supabase`) | `Authorization: Bearer <access_token de Supabase>` | administración; el **rol sale de nuestra tabla `usuarios`**, no del JWT. Sin perfil o desactivado → 403. Aquí `POST /auth/login` responde **410** (el login local queda deshabilitado) |
-| Token de servicio | `X-API-Token` = `AGUA_CLARA_API_TOKEN` | administración desde otros sistemas (solo existe si está configurado) |
-| Token de dispositivo (compartido, antiguo) | `X-API-Token` = `AGUA_CLARA_DEVICE_TOKEN` | solo `GET /estado` y `POST /dispositivos/confirmaciones` (compatibilidad) |
+| Token de servicio | `X-API-Token` = `HIDRO360_API_TOKEN` (alias obsoleto `AGUA_CLARA_API_TOKEN`) | administración desde otros sistemas (solo existe si está configurado) |
+| Token de dispositivo (compartido, antiguo) | `X-API-Token` = `HIDRO360_DEVICE_TOKEN` (alias obsoleto `AGUA_CLARA_DEVICE_TOKEN`) | solo `GET /estado` y `POST /dispositivos/confirmaciones` (compatibilidad) |
 | Token de terminal por vehículo | `X-Device-Token` (se obtiene al registrar el dispositivo; solo se guarda su SHA-256) | solo `/dispositivo/mision`, `/dispositivo/eventos`, `/dispositivo/latido`. La cisterna se **deriva del token**, nunca del cuerpo |
 El token de servicio sigue valiendo en ambos modos. **Sin estado local**: sesiones, bloqueos y límites de tasa viven en la base (valen entre instancias). Detrás de un proxy (Vercel), la IP de origen solo se toma de `X-Forwarded-For`/`X-Real-IP` si `HIDRO360_ENV=prod` y se declara el proxy (`HIDRO360_TRUST_PROXY=1` o `VERCEL=1`); ver `docs/SEGURIDAD.md`.
 Sin tokens configurados: `/estado` y `/dispositivos/confirmaciones` solo aceptan localhost; ningún acceso administrativo es implícito (hay que iniciar sesión).
