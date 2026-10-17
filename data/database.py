@@ -55,6 +55,12 @@ def insertar(tabla: str, datos: Dict[str, Any], clave: Optional[str] = None) -> 
     return _motor().insertar(tabla, datos, clave)
 
 
+def insertar_si_nuevo(tabla: str, datos: Dict[str, Any], clave: Any) -> bool:
+    """Inserta el documento solo si la clave aún no existe (True) o la deja como estaba (False).
+    Atómico y compartido entre instancias: base de la idempotencia del webhook de Telegram (update_id)."""
+    return _motor().insertar_si_nuevo(tabla, datos, clave)
+
+
 def actualizar(tabla: str, clave: Any, datos: Dict[str, Any]) -> None:
     _motor().actualizar(tabla, clave, datos)
 

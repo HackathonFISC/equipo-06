@@ -147,10 +147,12 @@ FUNCIONES_ADMIN = ["corregir_y_confirmar", "rechazar_reporte", "resolver_duplica
                    "obtener_foto", "eliminar_foto", "listar_usuarios_admin", "crear_usuario_admin",
                    "desactivar_usuario", "reactivar_usuario", "cambiar_rol_usuario", "registrar_dispositivo", "rotar_token", "desactivar_dispositivo",
                    "listar_dispositivos", "crear_mision", "crear_mision_desde_plan", "listar_misiones",
-                   "obtener_mision", "cancelar_mision", "listar_eventos", "datos_mapa"]
+                   "obtener_mision", "cancelar_mision", "listar_eventos", "datos_mapa",
+                   "obtener_audio", "eliminar_audio"]
 # Sin rol de usuario por diseño (ver comentarios en workflow.py)
 FUNCIONES_ABIERTAS = {"listar_sectores", "listar_cisternas", "estado_actual", "registrar_confirmacion_dispositivo",
-                      "crear_reporte", "consultar_reporte_publico", "avisos_publicos", "reiniciar_limites",
+                      "crear_reporte", "complementar_reporte", "consultar_reporte_publico", "avisos_publicos",
+                      "reiniciar_limites",
                       "operacion",
                       # terminales de vehículo: se autentican con su token (X-Device-Token), no con rol de usuario
                       "autenticar_dispositivo", "dispositivo_latido", "dispositivo_mision_activa",

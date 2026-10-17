@@ -370,6 +370,11 @@ _COLUMNAS: Dict[str, List[tuple]] = {
                        ("fecha_servidor", "ts", ("fecha_servidor",))],
     "recomendaciones": [("reporte_id", "i", ("reporte_id",)), ("estado", "t", ("estado",)),
                         ("proveedor", "t", ("proveedor",)), ("fecha", "ts", ("fecha",)), ("mision_id", "i", ("mision_id",))],
+    "audios": [("reporte_id", "i", ("reporte_id",)), ("tipo_mime", "t", ("tipo_mime",)), ("bytes", "i", ("bytes",)),
+               ("sha256", "t", ("sha256",)), ("fecha", "ts", ("fecha",))],
+    "telegram_updates": [("chat_id", "t", ("chat_id",)), ("procesado", "ts", ("procesado",))],
+    "telegram_sesiones": [("chat_id", "t", ("chat_id",)), ("estado", "t", ("estado",)),
+                          ("actualizado", "ts", ("actualizado",))],
 }
 assert set(_COLUMNAS) == set(CLAVES), "tabla sin columnas definidas"
 
@@ -446,6 +451,23 @@ def insertar(tabla: str, datos: Dict[str, Any], clave: Optional[str] = None) -> 
         marcadores = ", ".join(["%s::bigint"] + [m for _, m, _ in cols])
         con.execute(f"INSERT INTO {tabla} ({nombres}) VALUES ({marcadores})", [nuevo_id] + [v for _, _, v in cols])
         return nuevo_id
+
+
+def insertar_si_nuevo(tabla: str, datos: Dict[str, Any], clave: Any) -> bool:
+    """Inserta el documento solo si la clave aún no existe. Devuelve True si insertó, False si ya estaba.
+    Atómico (ON CONFLICT DO NOTHING): sirve para idempotencia entre instancias (p. ej. update_id de Telegram)."""
+    validar_tabla(tabla)
+    pk, entera = clave_de(tabla)
+    valor = normalizar_clave(tabla, clave)
+    if valor is None:
+        raise ValueError("Clave no válida para la tabla.")
+    cols = _fila(tabla, valor, datos)
+    nombres = ", ".join([pk] + [c for c, _, _ in cols])
+    marcadores = ", ".join(["%s::" + ("bigint" if entera else "text")] + [m for _, m, _ in cols])
+    with conexion(True) as con:
+        cur = con.execute(f"INSERT INTO {tabla} ({nombres}) VALUES ({marcadores}) ON CONFLICT ({pk}) DO NOTHING",
+                          [valor] + [v for _, _, v in cols])
+        return cur.rowcount == 1
 
 
 def actualizar(tabla: str, clave: Any, datos: Dict[str, Any]) -> None:

@@ -40,6 +40,12 @@ CREATE TABLE IF NOT EXISTS eventos_mision (
     id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS recomendaciones (
     id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS audios (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS telegram_updates (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS telegram_sesiones (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS sesiones (
     id TEXT PRIMARY KEY, datos TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS limites (
@@ -116,6 +122,16 @@ def insertar(tabla: str, datos: Dict[str, Any], clave: Optional[str] = None) -> 
         datos = {**datos, "id": nuevo_id}
         con.execute(f"UPDATE {tabla} SET datos = ? WHERE id = ?", (_dump(datos), nuevo_id))
         return nuevo_id
+
+
+def insertar_si_nuevo(tabla: str, datos: Dict[str, Any], clave: Any) -> bool:
+    """Inserta el documento solo si la clave aún no existe. Devuelve True si insertó, False si ya estaba.
+    Atómico (INSERT OR IGNORE): sirve para idempotencia entre instancias (p. ej. update_id de Telegram)."""
+    validar_tabla(tabla)
+    col = columna_clave(tabla)
+    with conexion() as con:
+        cur = con.execute(f"INSERT OR IGNORE INTO {tabla} ({col}, datos) VALUES (?, ?)", (clave, _dump(datos)))
+        return cur.rowcount == 1
 
 
 def actualizar(tabla: str, clave: Any, datos: Dict[str, Any]) -> None:

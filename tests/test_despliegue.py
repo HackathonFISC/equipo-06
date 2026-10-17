@@ -40,6 +40,8 @@ def test_escaner_ignora_ejemplos_falsos_y_marcador():
         "HIDRO360_API_TOKEN=reemplazar-por-64-hex-aleatorios",
         "GEMINI_API_KEY=",
         "SUPABASE_SERVICE_ROLE_KEY=",
+        "TELEGRAM_BOT_TOKEN=",
+        "TELEGRAM_WEBHOOK_SECRET=",
         "x = 'AI" + "zaSyAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA'  # secretos: ok",
     ]
     for linea in ok:
@@ -56,7 +58,9 @@ def test_env_example_sin_valores_reales():
     assert revisar_secretos.escanear_texto("\n".join(lineas)) == []
     for sec in ("GEMINI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET", "DATABASE_URL",
                 "HIDRO360_API_TOKEN", "HIDRO360_AUTH", "HIDRO360_STORAGE", "SUPABASE_URL", "SUPABASE_ANON_KEY",
-                "SUPABASE_STORAGE_BUCKET", "HIDRO360_CORS_ORIGINS", "HIDRO360_TRACE", "HIDRO360_ENV"):
+                "SUPABASE_STORAGE_BUCKET", "SUPABASE_AUDIO_BUCKET", "HIDRO360_CORS_ORIGINS", "HIDRO360_TRACE", "HIDRO360_ENV",
+                "TELEGRAM_BOT_TOKEN", "TELEGRAM_WEBHOOK_SECRET", "TELEGRAM_WEBHOOK_PATH", "HIDRO360_TRANSCRIPCION",
+                "PUBLIC_APP_URL"):
         assert sec in "\n".join(lineas), f"falta documentar {sec}"
 
 

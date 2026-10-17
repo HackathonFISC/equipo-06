@@ -237,10 +237,10 @@ def test_peor_caso_documentado_con_presupuesto(gemini, monkeypatch):
 # Permisos de la capa de IA: lectura y redacción, nunca escritura
 # ============================================================================================================
 MODULOS_IA = ("ia_gemini", "ia_tareas", "ia_operador", "orquestador", "ingest")
-ESCRITURAS = {"crear_mision", "decidir_recomendacion", "aprobar_plan", "crear_usuario", "crear_reporte", "confirmar",
+ESCRITURAS = {"crear_mision", "decidir_recomendacion", "aprobar_plan", "crear_usuario", "crear_reporte", "complementar_reporte", "confirmar",
               "corregir_y_confirmar", "rechazar_reporte", "marcar_duplicado", "insertar", "actualizar", "borrar",
-              "eliminar", "registrar", "executescript", "cargar_datos_demo"}
-PROHIBIDOS = {"workflow", "workflow_ia", "database", "audit", "auth", "fotos"}
+              "eliminar", "eliminar_foto", "eliminar_audio", "registrar", "executescript", "cargar_datos_demo"}
+PROHIBIDOS = {"workflow", "workflow_ia", "database", "audit", "auth", "fotos", "audios"}
 
 
 @pytest.mark.parametrize("modulo", MODULOS_IA)

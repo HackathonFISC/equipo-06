@@ -44,7 +44,7 @@ DB_PATH = Path(_env_compat("HIDRO360_DB", "AGUA_CLARA_DB") or BASE_DIR / "agua_c
 APP_NAME = "HIDRO360"
 EQUIPO = "TEAM VIFY AI"
 APP_VERSION = "0.6.0"
-VERSION_REGLAS = "reglas-2026.10.a"   # cambia si cambian pesos, topes o reglas deterministas
+VERSION_REGLAS = "reglas-2026.10.b"   # cambia si cambian pesos, topes o reglas deterministas
 
 # Parámetros del cálculo de prioridad (deterministas y visibles en la interfaz)
 PESO_HORAS = 0.40
@@ -139,7 +139,33 @@ SUPABASE_ANON_KEY = lambda: _env("SUPABASE_ANON_KEY")  # publica por diseno (RLS
 SUPABASE_SERVICE_ROLE_KEY = lambda: _env("SUPABASE_SERVICE_ROLE_KEY")  # PRIVILEGIADA: solo backend  # noqa: E731
 SUPABASE_JWT_SECRET = lambda: _env("SUPABASE_JWT_SECRET")  # solo proyectos con secreto simetrico (HS256)  # noqa: E731
 SUPABASE_STORAGE_BUCKET = lambda: _env("SUPABASE_STORAGE_BUCKET", "reportes-fotos")  # noqa: E731
+# Bucket PRIVADO para notas de voz / audios (mismo mecanismo que las fotos, distinto bucket).
+SUPABASE_AUDIO_BUCKET = lambda: _env("SUPABASE_AUDIO_BUCKET", "reportes-audios")  # noqa: E731
 # Origenes permitidos por CORS (lista separada por comas). Vacio => sin CORS (mismo origen / dispositivos).
 CORS_ORIGINS = lambda: [o.strip() for o in _env("HIDRO360_CORS_ORIGINS").split(",") if o.strip()]  # noqa: E731
 # Trazas: HIDRO360_TRACE=stdout escribe JSON por linea en la salida estandar (entornos sin disco persistente).
 TRACE_A_STDOUT = lambda: _env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE").lower() == "stdout"  # noqa: E731
+
+
+# --- Notas de voz / audio (adjuntos) ---------------------------------------------------------
+# Tope por audio. En Vercel el cuerpo de peticion del webhook lo fija Telegram (los archivos se DESCARGAN aparte,
+# por eso puede ser mayor que las fotos del portal). 10 MiB cubre notas de voz y audios habituales de Telegram.
+MAX_BYTES_AUDIO = int(os.environ.get("HIDRO360_MAX_BYTES_AUDIO", "").strip() or 10 * 1024 * 1024)
+MAX_AUDIOS_POR_REPORTE = 2
+# Adaptador de transcripcion: "simulada" (sin red ni claves; no transcribe, lo declara) es el unico implementado.
+# Para conectar un proveedor real cree una implementacion en services/transcripcion.py y usela aqui.
+TRANSCRIPCION_BACKEND = lambda: _env("HIDRO360_TRANSCRIPCION", "simulada").lower()  # noqa: E731
+
+
+# --- Telegram (canal de entrada de reportes) -------------------------------------------------
+# El bot se configura SOLO por variables de entorno; sin bot_token el webhook responde 503 y no se procesa nada.
+TELEGRAM_BOT_TOKEN = lambda: _env("TELEGRAM_BOT_TOKEN")            # [SECRETO] solo servidor  # noqa: E731
+TELEGRAM_WEBHOOK_SECRET = lambda: _env("TELEGRAM_WEBHOOK_SECRET")  # [SECRETO] cabecera del webhook  # noqa: E731
+# Ruta del webhook (configurable). Telegram la conoce al registrar el webhook con setWebhook.
+TELEGRAM_WEBHOOK_PATH = lambda: _env("TELEGRAM_WEBHOOK_PATH", "/api/v1/telegram/webhook")  # noqa: E731
+TELEGRAM_API_BASE = lambda: _env("TELEGRAM_API_BASE", "https://api.telegram.org")  # noqa: E731 (pruebas)
+TELEGRAM_MAX_MENSAJES = int(os.environ.get("HIDRO360_TELEGRAM_MAX_MENSAJES", "").strip() or 20)   # por ventana
+TELEGRAM_VENTANA_S = int(os.environ.get("HIDRO360_TELEGRAM_VENTANA_S", "").strip() or 60)
+TELEGRAM_MAX_TEXTO = 4000          # igual que el limite de crear_reporte
+# URL publica de la app (para mensajes/enlaces; no es un secreto). Vacia en local.
+PUBLIC_APP_URL = lambda: _env("PUBLIC_APP_URL").rstrip("/")  # noqa: E731

@@ -20,7 +20,7 @@ def motor(request):
         request.getfixturevalue("pg_esquema")
     assert db.motor() == request.param
     # conftest precarga la demo en SQLite: se parte de tablas vacías en ambos motores para aserciones idénticas
-    db.vaciar(["dispositivos", "fotos", "usuarios", "sesiones", "limites"])
+    db.vaciar(["dispositivos", "fotos", "audios", "telegram_updates", "telegram_sesiones", "usuarios", "sesiones", "limites"])
     db.vaciar()
     return request.param
 
@@ -77,13 +77,14 @@ def test_vaciar_reinicia_ids_y_respeta_tablas_operativas(motor):
     db.insertar("reportes", _reporte())
     db.insertar("usuarios", {"usuario": "ana", "rol": "administrador"}, clave="ana")
     db.insertar("fotos", {"id": "f1", "tipo_mime": "image/png", "bytes": 3, "sha256": "x"}, clave="f1")
+    db.insertar("audios", {"id": "a1", "tipo_mime": "audio/ogg", "bytes": 4, "sha256": "y", "transcripcion": None}, clave="a1")
     db.insertar("sesiones", {"usuario": "ana"}, clave="hs")
     db.vaciar(["reportes"])
     assert db.listar("reportes") == []
     assert db.insertar("reportes", _reporte()) == 1               # contador reiniciado
     db.vaciar()
     assert db.listar("reportes") == []
-    assert db.obtener("usuarios", "ana") and db.obtener("fotos", "f1") and db.obtener("sesiones", "hs")
+    assert db.obtener("usuarios", "ana") and db.obtener("fotos", "f1") and db.obtener("audios", "a1") and db.obtener("sesiones", "hs")
 
 
 def test_transaccion_confirma_y_revierte(motor):

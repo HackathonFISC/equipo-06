@@ -21,10 +21,14 @@ CLAVES: Dict[str, tuple] = {
     "misiones": ("id", True),
     "eventos_mision": ("id", True),
     "recomendaciones": ("id", True),
+    "audios": ("id", False),
+    "telegram_updates": ("id", False),
+    "telegram_sesiones": ("id", False),
 }
 
-# `vaciar()` sin argumentos. `usuarios`, `sesiones`, `dispositivos`, `fotos` y `limites` NO están aquí: reiniciar la
-# demo no debe borrar cuentas, sesiones, identidades de terminales, archivos subidos ni contadores de límite.
+# `vaciar()` sin argumentos. `usuarios`, `sesiones`, `dispositivos`, `fotos`, `audios`, `telegram_updates` y
+# `telegram_sesiones` NO están aquí: reiniciar la demo no debe borrar cuentas, sesiones, identidades de terminales,
+# archivos subidos ni la idempotencia del webhook de Telegram. `limites` tampoco (se gestiona aparte).
 # Misiones/eventos/recomendaciones sí se reinician con los datos de ejemplo.
 TABLAS: List[str] = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria",
                      "misiones", "eventos_mision", "recomendaciones"]

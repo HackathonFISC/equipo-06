@@ -325,7 +325,8 @@ def test_sin_migraciones_el_error_es_claro(pg_url, url_falsa):
 
 # ===================================================================== RLS y roles
 TABLAS = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria", "usuarios", "sesiones",
-          "limites", "fotos", "dispositivos", "misiones", "eventos_mision", "recomendaciones", "schema_migraciones"]
+          "limites", "fotos", "audios", "telegram_updates", "telegram_sesiones", "dispositivos", "misiones",
+          "eventos_mision", "recomendaciones", "schema_migraciones"]
 
 
 def _como(con, rol, sql, params=None):

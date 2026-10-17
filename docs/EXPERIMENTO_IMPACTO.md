@@ -1,6 +1,6 @@
 # Experimento de impacto — línea base vs. HIDRO360
 
-Generado: 2026-10-17T00:04:42 · reglas `reglas-2026.10.a` · 200 escenarios por celda · reproducible: `python -m evaluation.run_impacto`
+Generado: 2026-10-17T07:17:13 · reglas `reglas-2026.10.a` · 200 escenarios por celda · reproducible: `python -m evaluation.run_impacto`
 
 > **DATOS SINTÉTICOS.** Escenarios generados con semillas fijas y verdad de terreno inventada. Estos resultados describen el comportamiento de los algoritmos bajo los supuestos de abajo y **no son evidencia de impacto real sobre comunidades**.
 

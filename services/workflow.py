@@ -26,8 +26,8 @@ from models.schemas import (AccionDecision, Asignacion, CandidatoDuplicado, Cist
                             EstadoMision, EstadoParada, EstadoPlan, EstadoReporte, EventoMision, Mision,
                             Parada, PrioridadSector, PropuestaPlan, RegistroEvento, Reporte, Sector,
                             SectorPendiente, Severidad)
-from services import (audit, auth, communication, fotos as fotos_srv, geoloc, ia_tareas, ingest, limites, planner,
-                      prioritization, tracing)
+from services import (audios as audios_srv, audit, auth, communication, fotos as fotos_srv, geoloc, ia_tareas, ingest,
+                      limites, moderacion, planner, prioritization, tracing)
 from services.auth import requiere_admin
 from services.textutil import normalizar
 
@@ -240,14 +240,17 @@ def _nuevo_codigo(usados: set) -> str:
 def crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
                   canal: str = "manual", clave_idempotencia: Optional[str] = None,
                   origen: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None,
-                  fotos: Optional[List[Dict[str, Any]]] = None) -> Reporte:
+                  fotos: Optional[List[Dict[str, Any]]] = None,
+                  audios: Optional[List[Dict[str, Any]]] = None) -> Reporte:
     """Ingesta. Es la única operación de escritura abierta al ciudadano anónimo (portal público): no exige rol.
-    `origen` (p. ej. la IP del portal) activa el límite de tasa. Sin actor el responsable queda como «ciudadano».
-    Opcionales: `lat`/`lng` (ubicación elegida en el mapa, dentro de Panamá Oeste) y `fotos`
-    ([{"nombre":.., "base64":..}], máx. config.MAX_FOTOS_POR_REPORTE; validadas por firma binaria)."""
+    `origen` (p. ej. la IP del portal o el chat de Telegram) activa el límite de tasa. Sin actor el responsable
+    queda como «ciudadano». Opcionales: `lat`/`lng` (ubicación elegida o compartida, dentro de Panamá Oeste),
+    `fotos` ([{"nombre":.., "base64":..}], máx. config.MAX_FOTOS_POR_REPORTE) y `audios`
+    ([{"nombre"|"bytes".., "transcripcion":.., "metodo_transcripcion":.., "duracion_s":..}], máx.
+    config.MAX_AUDIOS_POR_REPORTE). Fotos y audios se validan por firma binaria."""
     if origen:      # fuera de la transacción: el evento de límite se conserva aunque la operación se rechace
         _limitar("reporte:" + origen, _LIMITE_REPORTES)
-    return _crear_reporte_tx(texto, responsable, ficticio, auditar, canal, clave_idempotencia, lat, lng, fotos)
+    return _crear_reporte_tx(texto, responsable, ficticio, auditar, canal, clave_idempotencia, lat, lng, fotos, audios)
 
 
 @operacion("crear_reporte")
@@ -258,7 +261,8 @@ def _crear_reporte_tx(*a, **k) -> Reporte:
 def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
                    canal: str = "manual", clave_idempotencia: Optional[str] = None,
                    lat: Optional[float] = None, lng: Optional[float] = None,
-                   fotos: Optional[List[Dict[str, Any]]] = None) -> Reporte:
+                   fotos: Optional[List[Dict[str, Any]]] = None,
+                   audios: Optional[List[Dict[str, Any]]] = None) -> Reporte:
     """Guarda el texto original (inalterable) y los campos extraídos, sin confirmar.
     Idempotencia: la misma `clave_idempotencia`, o el mismo texto reciente dentro de
     config.IDEMPOTENCIA_SEGUNDOS, devuelve el reporte ya creado en vez de duplicarlo."""
@@ -271,6 +275,10 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
     try:
         validadas = fotos_srv.validar(fotos)
     except fotos_srv.ErrorFoto as e:
+        raise ErrorDeNegocio(str(e))
+    try:
+        validadas_audio = audios_srv.validar(audios)
+    except audios_srv.ErrorAudio as e:
         raise ErrorDeNegocio(str(e))
     existentes = _listar_reportes()
     if clave_idempotencia:
@@ -288,6 +296,7 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
                 tracing.emitir("workflow", "crear_reporte_idempotente", "ok", {"reporte_id": r.id, "motivo": "mismo texto reciente"})
                 return r
     ex = ingest.interpretar(texto, listar_sectores())  # catálogo ficticio, ver nota de catálogos
+    senales = moderacion.evaluar(texto, ex, _poblacion_sector(ex.sector))
     datos = {
         "mensaje_original": texto, "fecha_creacion": datetime.now().isoformat(timespec="seconds"),
         "estado": EstadoReporte.POR_REVISAR.value, "sector": ex.sector, "calle": ex.calle,
@@ -302,8 +311,10 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
         "clave_idempotencia": clave_idempotencia,
         "codigo_seguimiento": _nuevo_codigo({r.codigo_seguimiento for r in existentes if r.codigo_seguimiento}),
         "lat": lat, "lng": lng, "ubicacion_fuente": "mapa" if lat is not None else None, "foto_ids": [],
+        "audio_ids": [], "mensajes_adicionales": [], "senales_revision": senales,
     }
     escritas: List[Tuple[str, str]] = []
+    audios_escritos: List[Tuple[str, str]] = []
     try:
         rid = db.insertar("reportes", datos)
         tracing.correlacionar(f"reporte:{rid}")
@@ -314,19 +325,40 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
                 raise ErrorDeNegocio(str(e))
             escritas.append((f.id, f.tipo_mime))
             datos["foto_ids"].append(f.id)
-        if escritas:
+        for a in validadas_audio:
+            try:
+                au = audios_srv.guardar(a["datos"], a["mime"], rid, duracion_s=a["duracion_s"],
+                                        transcripcion=a["transcripcion"], metodo_transcripcion=a["metodo_transcripcion"])
+            except audios_srv.ErrorAudio as e:
+                raise ErrorDeNegocio(str(e))
+            audios_escritos.append((au.id, au.tipo_mime))
+            datos["audio_ids"].append(au.id)
+        if escritas or audios_escritos:
             db.actualizar("reportes", rid, {**datos, "id": rid})
         rep = _obtener_reporte(rid)
         if auditar:
             quien = "ciudadano" if auth.actor() is None else _resolver_responsable(responsable)
             audit.registrar(quien, "crear_reporte", "reporte", rid,
                             detalle={"extraccion": ex.model_dump(mode="json"), "canal": canal,
-                                     "con_ubicacion": lat is not None, "n_fotos": len(escritas)})
+                                     "con_ubicacion": lat is not None, "n_fotos": len(escritas),
+                                     "n_audios": len(audios_escritos), "senales_revision": senales})
     except BaseException:
         for fid, mime in escritas:      # la transacción se revierte: no dejar archivos huérfanos
             fotos_srv.borrar_archivo(fid, mime)
+        for aid, mime in audios_escritos:
+            audios_srv.borrar_archivo(aid, mime)
         raise
     return rep
+
+
+def _poblacion_sector(nombre: Optional[str]) -> Optional[int]:
+    """Población estimada del sector reconocido (para comparar cifras del reporte). None si no se conoce."""
+    if not nombre:
+        return None
+    for s in listar_sectores():
+        if s.nombre == nombre:
+            return s.poblacion_estimada
+    return None
 
 
 def _recalcular_faltantes(r: Reporte) -> None:
@@ -398,6 +430,84 @@ def rechazar_reporte(reporte_id: int, responsable: str, motivo: str) -> Reporte:
     r.motivo_rechazo = motivo.strip()
     _guardar_reporte(r)
     audit.registrar(responsable, "rechazar_reporte", "reporte", r.id, motivo=motivo)
+    return r
+
+
+# ---------------------------------------------- complemento ciudadano (p. ej. webhook de Telegram)
+@operacion("complementar_reporte")
+def complementar_reporte(reporte_id: int, responsable: str = "anónimo", *, descripcion: Optional[str] = None,
+                         lat: Optional[float] = None, lng: Optional[float] = None,
+                         referencia_ubicacion: Optional[str] = None, ubicacion_fuente: str = "telegram",
+                         fotos: Optional[List[Dict[str, Any]]] = None,
+                         audios: Optional[List[Dict[str, Any]]] = None,
+                         senales: Optional[List[str]] = None) -> Reporte:
+    """Añade información que el ciudadano aporta DESPUÉS de crear el reporte (p. ej. el chatbot de Telegram
+    pregunta la ubicación y el ciudadano responde). El texto original (`mensaje_original`) NUNCA se modifica:
+    la aclaración se guarda aparte en `mensajes_adicionales`. Solo opera mientras el reporte está `por_revisar`.
+
+    No exige rol administrativo: es una continuación del reporte ciudadano (misma naturaleza que `crear_reporte`).
+    La única puerta que la invoca es el webhook de Telegram, protegido por su secreto; no se expone en la API pública
+    ni en la administración. Coordenadas: solo se fijan si el reporte aún no tenía (`lat`/`lng` vacíos)."""
+    r = _obtener_reporte(reporte_id)
+    if r.estado != EstadoReporte.POR_REVISAR:
+        raise ErrorDeNegocio(f"El reporte {reporte_id} ya está '{r.estado.value}': no admite más aclaraciones.")
+    cambios: Dict[str, Any] = {}
+
+    if descripcion is not None:
+        d = (descripcion or "").strip()
+        if d:
+            if len(d) > 4000:
+                raise ErrorDeNegocio("La aclaración excede 4000 caracteres.")
+            r.mensajes_adicionales = list(r.mensajes_adicionales) + [d]
+            cambios["aclaracion"] = {"longitud": len(d)}
+
+    if lat is not None or lng is not None:
+        _validar_coord(lat, lng)
+        if r.lat is None and r.lng is None:
+            r.lat, r.lng, r.ubicacion_fuente = lat, lng, ubicacion_fuente
+            cambios["ubicacion"] = {"antes": None, "despues": {"lat": lat, "lng": lng, "fuente": ubicacion_fuente}}
+        # Si ya tenía coordenadas, no se pisan (una ubicación ya confirmada no se sobrescribe por otra aproximada).
+
+    if referencia_ubicacion:
+        if not r.referencia_ubicacion:
+            r.referencia_ubicacion = referencia_ubicacion.strip()[:300]
+            cambios["referencia_ubicacion"] = r.referencia_ubicacion
+
+    try:
+        validadas = fotos_srv.validar(fotos)
+        validadas_audio = audios_srv.validar(audios)
+    except (fotos_srv.ErrorFoto, audios_srv.ErrorAudio) as e:
+        raise ErrorDeNegocio(str(e))
+
+    escritas: List[Tuple[str, str]] = []
+    audios_escritos: List[Tuple[str, str]] = []
+    try:
+        for contenido, mime in validadas:
+            f = fotos_srv.guardar(contenido, mime, r.id)
+            escritas.append((f.id, f.tipo_mime))
+            r.foto_ids = list(r.foto_ids) + [f.id]
+        for a in validadas_audio:
+            au = audios_srv.guardar(a["datos"], a["mime"], r.id, duracion_s=a["duracion_s"],
+                                    transcripcion=a["transcripcion"], metodo_transcripcion=a["metodo_transcripcion"])
+            audios_escritos.append((au.id, au.tipo_mime))
+            r.audio_ids = list(r.audio_ids) + [au.id]
+    except (fotos_srv.ErrorFoto, audios_srv.ErrorAudio) as e:
+        for fid, mime in escritas:
+            fotos_srv.borrar_archivo(fid, mime)
+        for aid, mime in audios_escritos:
+            audios_srv.borrar_archivo(aid, mime)
+        raise ErrorDeNegocio(str(e))
+
+    if senales:
+        nuevas = [str(s) for s in senales if str(s)]
+        r.senales_revision = sorted(set(r.senales_revision) | set(nuevas))
+        if nuevas:
+            cambios["senales_revision"] = nuevas
+
+    _guardar_reporte(r)
+    quien = "ciudadano" if auth.actor() is None else _resolver_responsable(responsable)
+    audit.registrar(quien, "complementar_reporte", "reporte", r.id,
+                    detalle={**cambios, "n_fotos": len(escritas), "n_audios": len(audios_escritos)})
     return r
 
 
@@ -810,6 +920,39 @@ def eliminar_foto(reporte_id: int, foto_id: str, motivo: str, responsable: str =
     r.foto_ids = [x for x in r.foto_ids if x != foto_id]
     _guardar_reporte(r)
     audit.registrar(quien, "eliminar_foto", "reporte", reporte_id, motivo=motivo.strip(), detalle={"foto_id": foto_id})
+    return r
+
+
+# ================================================================== audios (solo administración)
+@requiere_admin
+def obtener_audio(reporte_id: int, audio_id: str) -> Tuple[bytes, str]:
+    """(bytes, tipo_mime) de una nota de voz/audio de un reporte. El portal público nunca llega aquí y el audio debe
+    pertenecer al reporte indicado (no basta con conocer un id de audio)."""
+    r = _obtener_reporte(reporte_id)
+    if audio_id not in r.audio_ids:
+        raise ErrorDeNegocio("El audio no existe.")
+    res = audios_srv.leer(audio_id)
+    if res is None:
+        raise ErrorDeNegocio("El audio no existe o su archivo no está disponible.")
+    return res
+
+
+@requiere_admin
+@operacion("eliminar_audio")
+def eliminar_audio(reporte_id: int, audio_id: str, motivo: str, responsable: str = "") -> Reporte:
+    """Borrado controlado de un audio (p. ej. contiene datos personales). Quita archivo, metadatos y la referencia
+    del reporte, con motivo obligatorio y auditoría. Si el almacén no confirma el borrado, no cambia nada."""
+    quien = _quien(responsable)
+    if not (motivo or "").strip():
+        raise ErrorDeNegocio("Indique el motivo del borrado.")
+    r = _obtener_reporte(reporte_id)
+    if audio_id not in r.audio_ids:
+        raise ErrorDeNegocio("El audio no existe.")
+    if not audios_srv.eliminar(audio_id):
+        raise ErrorDeNegocio("No se pudo borrar el archivo del audio; no se hizo ningún cambio.")
+    r.audio_ids = [x for x in r.audio_ids if x != audio_id]
+    _guardar_reporte(r)
+    audit.registrar(quien, "eliminar_audio", "reporte", reporte_id, motivo=motivo.strip(), detalle={"audio_id": audio_id})
     return r
 
 

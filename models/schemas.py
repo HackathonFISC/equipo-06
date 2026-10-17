@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-SCHEMA_VERSION = "1.3"  # 1.3: coordenadas/fotos en Reporte, misiones, dispositivos por vehículo, recomendaciones IA
+SCHEMA_VERSION = "1.4"  # 1.4: adjuntos de audio (Reporte.audio_ids), mensajes adicionales y señales de revisión
 
 
 class Severidad(str, Enum):
@@ -145,6 +145,13 @@ class Reporte(BaseModel):
     lng: Optional[float] = Field(None, ge=-180, le=180)
     ubicacion_fuente: Optional[str] = None                # "mapa" | "sector" (centro del sector, aproximada)
     foto_ids: List[str] = Field(default_factory=list)     # ids de Foto (ver services/fotos)
+    audio_ids: List[str] = Field(default_factory=list)    # ids de Audio (ver services/audios)
+    # Texto adicional que el ciudadano aportó DESPUÉS (p. ej. el webhook de Telegram pide una aclaración).
+    # Nunca modifica `mensaje_original`, que es inalterable.
+    mensajes_adicionales: List[str] = Field(default_factory=list)
+    # Señales deterministas de que el reporte merece revisión humana cuidadosa (inconsistencias, exageración
+    # posible, ubicación imprecisa). NO son un veredicto de falsedad: solo marcan para que una persona lo mire.
+    senales_revision: List[str] = Field(default_factory=list)
 
 
 class CandidatoDuplicado(BaseModel):
@@ -269,6 +276,22 @@ class Foto(BaseModel):
     tipo_mime: str                           # image/jpeg | image/png | image/webp (validado por firma, no por extensión)
     bytes: int
     sha256: str
+    fecha: datetime = Field(default_factory=datetime.now)
+
+
+class Audio(BaseModel):
+    """Metadatos de una nota de voz / audio. El archivo vive en MEDIA_DIR (local) o en el bucket privado de audios
+    (Supabase). El tipo se decide por firma binaria, nunca por la extensión ni el Content-Type del cliente.
+    `transcripcion` es el texto obtenido (o None si el adaptador no pudo); `metodo_transcripcion` declara el
+    proveedor real o `simulada`, para no presentar como transcrito lo que no se transcribió."""
+    id: str
+    reporte_id: Optional[int] = None
+    tipo_mime: str                           # audio/ogg | audio/mpeg | audio/mp4 | audio/wav | audio/webm | audio/amr
+    bytes: int
+    sha256: str
+    duracion_s: Optional[float] = None       # declarada por Telegram; no verificada
+    transcripcion: Optional[str] = None
+    metodo_transcripcion: str = "simulada"   # simulada | gemini | otro proveedor real
     fecha: datetime = Field(default_factory=datetime.now)
 
 
