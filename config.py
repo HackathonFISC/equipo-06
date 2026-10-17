@@ -125,6 +125,11 @@ DATABASE_URL = lambda: _env("DATABASE_URL")  # noqa: E731
 
 
 def modo_postgres() -> bool:
+    """HIDRO360_BD=sqlite fuerza SQLite aunque DATABASE_URL exista (demostración local: nunca toca Supabase).
+    HIDRO360_BD=postgres exige DATABASE_URL. Sin variable: PostgreSQL si hay DATABASE_URL."""
+    modo = _env("HIDRO360_BD", "").lower()
+    if modo == "sqlite":
+        return False
     return bool(DATABASE_URL())
 
 

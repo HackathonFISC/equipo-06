@@ -102,3 +102,4 @@ supabase/functions/.env
 # Caches de herramientas adicionales
 .uv-cache/
 *.tsbuildinfo
+datos_demo/

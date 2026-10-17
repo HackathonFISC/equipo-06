@@ -30,6 +30,7 @@ PORTAL = [
     ("reportar", "Reportar", ft.Icons.WATER_DROP, "reportar"),
     ("consultar", "Consultar mi reporte", ft.Icons.SEARCH, "consultar"),
     ("avisos", "Avisos", ft.Icons.CAMPAIGN, "avisos"),
+    ("asistente", "Asistente", ft.Icons.CHAT_BUBBLE, "asistente"),
 ]
 
 # ------------------------------------------------------ consola de administración
