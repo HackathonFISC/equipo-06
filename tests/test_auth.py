@@ -202,7 +202,9 @@ def test_responsable_auditado_es_el_usuario_autenticado():
 # ------------------------------------------------------------------------ API: rutas
 EXENTAS = {"/api/v1/salud", "/api/v1/estado", "/api/v1/dispositivos/confirmaciones", "/api/v1/auth/login",
            # terminal de vehículo (token propio): su 401/403 se prueba en tests/test_flota.py
-           "/api/v1/dispositivo/mision", "/api/v1/dispositivo/eventos", "/api/v1/dispositivo/latido"}
+           "/api/v1/dispositivo/mision", "/api/v1/dispositivo/eventos", "/api/v1/dispositivo/latido",
+           # webhook de Telegram: autenticado por su propio secreto (X-Telegram-Bot-Api-Secret-Token); ver test_telegram_webhook.py
+           "/api/v1/telegram/webhook"}
 SOLO_AUTENTICADAS = {"/api/v1/auth/logout", "/api/v1/auth/yo"}
 
 

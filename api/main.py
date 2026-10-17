@@ -780,3 +780,8 @@ try:
     app.include_router(_rutas_ia.crear_router(admin), prefix="/api/v1")
 except ImportError:  # pragma: no cover - el módulo de IA aún no está disponible
     pass
+
+# --- webhook de Telegram (entrada ciudadana). Se autentica con su propio secreto, no con sesión.
+from api import telegram_webhook as _telegram  # noqa: E402
+
+app.include_router(_telegram.router, prefix="/api/v1")
