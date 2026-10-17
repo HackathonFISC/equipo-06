@@ -178,3 +178,6 @@ def exigir_persistencia_produccion() -> None:
     if en_produccion and not modo_postgres():
         raise RuntimeError("Falta DATABASE_URL: en producción HIDRO360 necesita PostgreSQL/Supabase; "
                            "no arranca con SQLite temporal.")
+
+# URL pública de la interfaz Flet (servicio aparte del backend). Solo se muestra en GET / de la API.
+UI_URL = lambda: _env("HIDRO360_UI_URL").rstrip("/")  # noqa: E731

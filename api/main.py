@@ -474,6 +474,15 @@ def _doble(metodo: str, ruta: str, alias: str, **kw):
     return deco
 
 
+@app.get("/")
+def raiz():
+    """Identifica el servicio y dirige a la interfaz. Sin documentación interna ni datos de configuración."""
+    interfaz = config.UI_URL()
+    return {"servicio": "HIDRO360 · API", "equipo": config.EQUIPO,
+            "interfaz": interfaz or "No configurada: defina HIDRO360_UI_URL en el servidor.",
+            "salud": "/api/v1/salud"}
+
+
 @app.get("/api/v1/salud")
 def salud():
     """Sin secretos ni URLs. Comprueba la base de verdad: si no responde devuelve 503 y NO declara persistencia
