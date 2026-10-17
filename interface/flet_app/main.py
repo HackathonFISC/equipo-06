@@ -237,6 +237,7 @@ def main(page: ft.Page) -> None:
 
 
 def run(argv: Optional[list] = None) -> None:
+    config.exigir_persistencia_produccion()  # en producción la interfaz NO puede caer a SQLite temporal
     ap = argparse.ArgumentParser(description="HIDRO360 · TEAM VIFY AI (interfaz Flet)")
     ap.add_argument("--web", action="store_true", help="servir como aplicación web (para Raspberry Pi o acceso desde el navegador)")
     ap.add_argument("--host", default="127.0.0.1", help="solo con --web; use 0.0.0.0 solo en una red de confianza (el canal no está cifrado)")

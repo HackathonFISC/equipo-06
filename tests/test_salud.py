@@ -30,3 +30,18 @@ def test_salud_con_base_caida_no_declara_persistencia(c, monkeypatch):
     assert cuerpo["ok"] is False
     assert cuerpo["persistencia"] == "no_disponible"
     assert "detalle interno" not in r.text
+
+
+def test_produccion_sin_database_url_no_arranca(monkeypatch):
+    import config
+    monkeypatch.setenv("HIDRO360_ENV", "prod")
+    monkeypatch.setenv("DATABASE_URL", "")
+    with pytest.raises(RuntimeError, match="DATABASE_URL"):
+        config.exigir_persistencia_produccion()
+
+
+def test_desarrollo_sin_database_url_usa_sqlite(monkeypatch):
+    import config
+    monkeypatch.setenv("HIDRO360_ENV", "dev")
+    monkeypatch.setenv("DATABASE_URL", "")
+    config.exigir_persistencia_produccion()  # no debe lanzar
