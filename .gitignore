@@ -67,3 +67,25 @@ backups/
 
 # Paquete de librerias del fabricante (354 MB; se copia a Documents/Arduino/libraries)
 PANTALLA_DE_MONITOREO/libraries/
+
+# Fotografías subidas (HIDRO360_MEDIA_DIR; en la Raspberry viven en /var/lib/hidro360/media)
+media/
+
+# SQLite: archivos auxiliares del modo WAL/rollback y copias de seguridad
+*.db-wal
+*.db-shm
+*.db-journal
+*.sqlite-wal
+*.sqlite-shm
+*.bak
+
+# Entornos virtuales adicionales y cachés de herramientas
+.venv*/
+venv*/
+.mypy_cache/
+.ruff_cache/
+.flet/
+
+# Artefactos de compilación del firmware (no el código ni el .example)
+firmware/**/.pio/
+firmware/**/build/

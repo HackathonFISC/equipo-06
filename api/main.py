@@ -13,6 +13,9 @@ AUTENTICACIÓN Y ROLES
   - Dispositivos: `GET /estado` y `POST /dispositivos/confirmaciones` con `X-API-Token` = token de servicio o de
     dispositivo (AGUA_CLARA_DEVICE_TOKEN). Sin ningún token configurado solo se aceptan peticiones de la propia
     máquina. Un token de dispositivo NO sirve en endpoints administrativos.
+  - Terminales por vehículo (ESP32-S3): `X-Device-Token` (token propio de la cisterna, solo se guarda su SHA-256) en
+    /dispositivo/mision, /dispositivo/eventos y /dispositivo/latido. La identidad (cisterna_id) sale del token, nunca del
+    cuerpo. Límite de tasa y bloqueo suave por IP tras intentos fallidos. Un token de vehículo no sirve en rutas admin.
   - Públicos (sin credenciales, con límite de tasa por IP): /salud, /publico/*, /auth/login.
   - CORS no está habilitado. Los errores no incluyen trazas ni detalles internos.
   - El actor autenticado prevalece sobre el `responsable` del cuerpo (opcional): no se puede firmar como otro.
@@ -23,12 +26,12 @@ import time
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
-from fastapi.responses import JSONResponse
+from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
-from models.schemas import (AccionDecision, Asignacion, Cisterna, ConfirmacionDispositivo, EstadoActual,
-                            PropuestaPlan, Reporte, SCHEMA_VERSION)
+from models.schemas import (AccionDecision, Asignacion, Cisterna, ConfirmacionDispositivo, Dispositivo,
+                            EstadoActual, Mision, Parada, PropuestaPlan, RegistroEvento, Reporte, SCHEMA_VERSION)
 from services import audit, auth, tracing, workflow
 from services.auth import Actor, ErrorAutenticacion, ErrorAutorizacion, Rol
 from services.workflow import ErrorDeNegocio, ErrorLimite
@@ -42,9 +45,21 @@ _LOGIN_MAX, _LOGIN_VENTANA = 10, 60
 _login_intentos: Dict[str, List[float]] = {}
 
 
+# Terminales: límite general por IP y bloqueo suave tras fallos de token.
+_DISP_MAX, _DISP_VENTANA = 240, 60
+_DISP_FALLOS_MAX, _DISP_FALLOS_VENTANA = 10, 300
+_disp_peticiones: Dict[str, List[float]] = {}
+_disp_fallos: Dict[str, List[float]] = {}
+
+# Tamaño máximo de cuerpo aceptado (3 fotos de 3 MB en base64 caben con holgura). Se comprueba Content-Length.
+MAX_CUERPO_BYTES = 16 * 1024 * 1024
+
+
 def reiniciar_limites() -> None:
     """Pruebas."""
     _login_intentos.clear()
+    _disp_peticiones.clear()
+    _disp_fallos.clear()
 
 
 def _ip(request: Request) -> str:
@@ -106,6 +121,29 @@ def dispositivo_u_operador(request: Request, x_api_token: Optional[str] = Header
     return _autenticar_dispositivo(request, x_api_token, [config.API_TOKEN(), config.DEVICE_TOKEN()])
 
 
+def _recientes(tabla: Dict[str, List[float]], clave: str, ventana: float) -> List[float]:
+    ahora = time.monotonic()
+    r = [t for t in tabla.get(clave, []) if ahora - t < ventana]
+    tabla[clave] = r
+    return r
+
+
+def terminal(request: Request, x_device_token: Optional[str] = Header(None)) -> Dispositivo:
+    """Autentica la terminal de un vehículo por su token propio. Devuelve el Dispositivo (la cisterna sale de aquí)."""
+    ip = _ip(request)
+    if len(_recientes(_disp_fallos, ip, _DISP_FALLOS_VENTANA)) >= _DISP_FALLOS_MAX:
+        raise ErrorLimite("Demasiados intentos fallidos. Espere unos minutos.")
+    pet = _recientes(_disp_peticiones, ip, _DISP_VENTANA)
+    if len(pet) >= _DISP_MAX:
+        raise ErrorLimite("Demasiadas solicitudes.")
+    pet.append(time.monotonic())
+    d = workflow.autenticar_dispositivo(x_device_token)
+    if d is None:
+        _disp_fallos[ip].append(time.monotonic())
+        raise ErrorAutenticacion("Token de dispositivo inválido o ausente (cabecera X-Device-Token).")
+    return d
+
+
 def _ejecutar(actor: Optional[Actor], fn: Callable, *a, **k):
     """Ejecuta la función de negocio con el actor del contexto (el backend vuelve a comprobar el rol)."""
     with auth.como(actor):
@@ -139,6 +177,17 @@ def _error_negocio(request: Request, e: ErrorDeNegocio):
     return JSONResponse(status_code=codigo, content={"detail": msg})
 
 
+@app.middleware("http")
+async def _limite_cuerpo(request: Request, call_next):
+    try:
+        largo = int(request.headers.get("content-length") or 0)
+    except ValueError:
+        largo = 0
+    if largo > MAX_CUERPO_BYTES:
+        return JSONResponse(status_code=413, content={"detail": "El envío es demasiado grande."})
+    return await call_next(request)
+
+
 @app.exception_handler(Exception)
 def _error_interno(request: Request, e: Exception):
     return JSONResponse(status_code=500, content={"detail": "Error interno."})
@@ -154,9 +203,19 @@ class Credenciales(BaseModel):
     clave: str = Field(min_length=1, max_length=200)
 
 
+class FotoEntrada(BaseModel):
+    """El nombre del cliente NO se usa para guardar el archivo; el tipo se decide por la firma binaria."""
+    model_config = ConfigDict(extra="forbid")
+    nombre: str = Field("", max_length=120)
+    base64: str = Field(min_length=1, max_length=config.MAX_BYTES_FOTO * 4 // 3 + 200)
+
+
 class ReportePublico(BaseModel):
     model_config = ConfigDict(extra="forbid")
     texto: str = Field(min_length=1, max_length=4000)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
+    fotos: List[FotoEntrada] = Field(default_factory=list, max_length=config.MAX_FOTOS_POR_REPORTE)
 
 
 class ReporteNuevo(_Cuerpo):
@@ -164,6 +223,9 @@ class ReporteNuevo(_Cuerpo):
     responsable: Optional[str] = Field(None, min_length=1)
     canal: str = "api"
     clave_idempotencia: Optional[str] = Field(None, max_length=80)
+    lat: Optional[float] = Field(None, ge=-90, le=90)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
+    fotos: List[FotoEntrada] = Field(default_factory=list, max_length=config.MAX_FOTOS_POR_REPORTE)
 
 
 class Correccion(_Cuerpo):
@@ -206,6 +268,47 @@ class EdicionPlan(_Cuerpo):
     responsable: Optional[str] = Field(None, min_length=1)
     motivo: str = Field(min_length=1)
     asignaciones: List[Asignacion]
+
+
+class DispositivoNuevo(_Cuerpo):
+    cisterna_id: str = Field(min_length=1, max_length=40)
+    nombre: str = Field("", max_length=80)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class AccionDispositivo(_Cuerpo):
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class MisionNueva(_Cuerpo):
+    cisterna_id: str = Field(min_length=1, max_length=40)
+    paradas: List[Parada] = Field(min_length=1, max_length=30)
+    plan_id: Optional[int] = None
+    recomendacion_id: Optional[int] = None
+    motivo: str = Field("", max_length=300)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class MisionDesdePlan(_Cuerpo):
+    cisterna_id: str = Field(min_length=1, max_length=40)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class CancelacionMision(_Cuerpo):
+    motivo: str = Field(min_length=1, max_length=300)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class LoteEventos(BaseModel):
+    """Cada evento se valida por separado en el backend: uno defectuoso no bloquea la cola de la terminal."""
+    eventos: List[Dict[str, Any]] = Field(max_length=workflow.MAX_EVENTOS_LOTE)
+
+
+class Latido(_Cuerpo):
+    firmware: str = Field("", max_length=40)
+    wifi_rssi: Optional[int] = Field(None, ge=-150, le=0)
+    pendientes: int = Field(0, ge=0, le=100000)
+    uptime_s: Optional[int] = Field(None, ge=0)
 
 
 # ------------------------------------------------------------------------ rutas
@@ -255,7 +358,8 @@ def yo(actor: Actor = Depends(autenticado)):
 # --- portal público (sin cuenta): no devuelve ningún dato interno
 @app.post("/api/v1/publico/reportes", status_code=201)
 def publico_crear(body: ReportePublico, request: Request):
-    r = _ejecutar(None, workflow.crear_reporte, body.texto, "ciudadano", canal="portal", origen=_ip(request))
+    r = _ejecutar(None, workflow.crear_reporte, body.texto, "ciudadano", canal="portal", origen=_ip(request),
+                  lat=body.lat, lng=body.lng, fotos=[f.model_dump() for f in body.fotos])
     return {"codigo_seguimiento": r.codigo_seguimiento,
             "mensaje": "Recibimos su reporte. Guarde este código para consultar su estado. "
                        "Un equipo lo revisará; no se promete hora de atención."}
@@ -295,7 +399,8 @@ def listar_reportes(actor: Actor = Depends(admin)):
 @_doble("POST", "/reportes", "/reports", response_model=Reporte, status_code=201)
 def crear_reporte(body: ReporteNuevo, actor: Actor = Depends(admin)):
     return _ejecutar(actor, workflow.crear_reporte, body.texto, _resp(body.responsable, actor), canal=body.canal,
-                     clave_idempotencia=body.clave_idempotencia)
+                     clave_idempotencia=body.clave_idempotencia, lat=body.lat, lng=body.lng,
+                     fotos=[f.model_dump() for f in body.fotos])
 
 
 @_doble("GET", "/reportes/{reporte_id}", "/reports/{reporte_id}", response_model=Reporte)
@@ -379,3 +484,110 @@ def trazas(run_id: Optional[str] = None, agent: Optional[str] = None, status: Op
            correlation_id: Optional[str] = None, actor: Actor = Depends(admin)):
     return {"integridad": tracing.verificar_integridad(),
             "eventos": tracing.leer(run_id=run_id, agent=agent, status=status, correlation_id=correlation_id)}
+
+
+# --- fotos (solo administración; el portal público no las lee)
+_EXT = {"image/jpeg": "jpg", "image/png": "png", "image/webp": "webp"}
+
+
+@app.get("/api/v1/reportes/{reporte_id}/fotos/{foto_id}")
+def foto(reporte_id: int, foto_id: str, actor: Actor = Depends(admin)):
+    contenido, mime = _ejecutar(actor, workflow.obtener_foto, reporte_id, foto_id)
+    return Response(content=contenido, media_type=mime, headers={
+        "X-Content-Type-Options": "nosniff",
+        "Content-Disposition": f'inline; filename="foto-{reporte_id}.{_EXT.get(mime, "bin")}"',
+        "Cache-Control": "private, no-store",
+        "Content-Security-Policy": "default-src 'none'; sandbox"})
+
+
+# --- dispositivos por vehículo (administración)
+def _dispositivo_json(d: Dispositivo) -> Dict[str, Any]:
+    return d.model_dump(mode="json")
+
+
+@app.post("/api/v1/dispositivos", status_code=201)
+def registrar_dispositivo(body: DispositivoNuevo, actor: Actor = Depends(admin)):
+    """El token en claro se devuelve UNA vez; después solo existe su hash."""
+    d, token = _ejecutar(actor, workflow.registrar_dispositivo, body.cisterna_id, body.nombre, body.responsable or "")
+    return {"dispositivo": _dispositivo_json(d), "token": token,
+            "aviso": "Guarde el token ahora: no se volverá a mostrar."}
+
+
+@app.get("/api/v1/dispositivos", response_model=List[Dispositivo])
+def listar_dispositivos(actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.listar_dispositivos)
+
+
+@app.post("/api/v1/dispositivos/{cisterna_id}/rotar-token")
+def rotar_token(cisterna_id: str, body: AccionDispositivo = AccionDispositivo(), actor: Actor = Depends(admin)):
+    d, token = _ejecutar(actor, workflow.rotar_token, cisterna_id, body.responsable or "")
+    return {"dispositivo": _dispositivo_json(d), "token": token,
+            "aviso": "El token anterior dejó de funcionar. Guarde este: no se volverá a mostrar."}
+
+
+@app.post("/api/v1/dispositivos/{cisterna_id}/desactivar", response_model=Dispositivo)
+def desactivar_dispositivo(cisterna_id: str, body: AccionDispositivo = AccionDispositivo(),
+                           actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.desactivar_dispositivo, cisterna_id, body.responsable or "")
+
+
+# --- misiones, eventos y mapa (administración)
+@app.post("/api/v1/misiones", response_model=Mision, status_code=201)
+def crear_mision(body: MisionNueva, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.crear_mision, body.cisterna_id, body.paradas, _resp(body.responsable, actor),
+                     body.plan_id, body.recomendacion_id, body.motivo)
+
+
+@app.post("/api/v1/planes/{plan_id}/misiones", response_model=Mision, status_code=201)
+def crear_mision_desde_plan(plan_id: int, body: MisionDesdePlan, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.crear_mision_desde_plan, plan_id, body.cisterna_id, _resp(body.responsable, actor))
+
+
+@app.get("/api/v1/misiones", response_model=List[Mision])
+def listar_misiones(estado: Optional[str] = None, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.listar_misiones, estado)
+
+
+@app.get("/api/v1/misiones/{mision_id}", response_model=Mision)
+def obtener_mision(mision_id: int, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.obtener_mision, mision_id)
+
+
+@app.post("/api/v1/misiones/{mision_id}/cancelar", response_model=Mision)
+def cancelar_mision(mision_id: int, body: CancelacionMision, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.cancelar_mision, mision_id, _resp(body.responsable, actor), body.motivo)
+
+
+@app.get("/api/v1/eventos", response_model=List[RegistroEvento])
+def listar_eventos(mision_id: Optional[int] = None, cisterna_id: Optional[str] = None, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.listar_eventos, mision_id, cisterna_id)
+
+
+@app.get("/api/v1/mapa")
+def mapa(actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.datos_mapa)
+
+
+# --- terminal del vehículo (X-Device-Token propio; la cisterna sale del token)
+@app.get("/api/v1/dispositivo/mision")
+def terminal_mision(d: Dispositivo = Depends(terminal)):
+    return _ejecutar(None, workflow.dispositivo_mision_activa, d.cisterna_id)
+
+
+@app.post("/api/v1/dispositivo/eventos")
+def terminal_eventos(body: LoteEventos, d: Dispositivo = Depends(terminal)):
+    return {"resultados": _ejecutar(None, workflow.dispositivo_recibir_eventos, d.cisterna_id, body.eventos)}
+
+
+@app.post("/api/v1/dispositivo/latido")
+def terminal_latido(body: Latido, d: Dispositivo = Depends(terminal)):
+    return _ejecutar(None, workflow.dispositivo_latido, d.cisterna_id, body.firmware, body.wifi_rssi,
+                     body.pendientes, body.uptime_s)
+
+
+# --- rutas de IA (api/rutas_ia.py las define; se montan aquí con la dependencia de administrador)
+try:
+    from api import rutas_ia as _rutas_ia
+    app.include_router(_rutas_ia.crear_router(admin), prefix="/api/v1")
+except ImportError:  # pragma: no cover - el módulo de IA aún no está disponible
+    pass

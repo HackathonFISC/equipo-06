@@ -6,17 +6,23 @@ Tareas de IA de apoyo (opcionales). Gemini REDACTA; el código valida y decide q
     en la entrada.
   - borrador_comunicacion: borrador informativo para un sector. Se rechaza si promete hora de llegada o
     supera el largo máximo; el aviso «BORRADOR» lo añade siempre el código.
+  - recomendar_respuesta: texto breve de ACCIÓN SUGERIDA para un reporte analizado (orquestador). Salida con
+    esquema estricto; se descarta si inventa sector/cisterna, introduce cifras ajenas a los datos, incluye
+    datos personales o promete hora. Origen: "gemini" | "reglas" | "reglas(fallback)".
 Si Gemini no está configurado o falla, se devuelve el texto local y `origen` lo dice ("local"). Nunca se
 presenta texto local como si fuera de Gemini. Ninguna de estas tareas aprueba, envía ni asigna nada.
 """
 
 import json
 import re
-from typing import Dict, List
+from typing import Any, Dict, List, Optional
+
+from pydantic import BaseModel, Field, ValidationError
 
 import config
 from models.schemas import PrioridadSector
 from services import communication, ia_gemini, tracing
+from services.textutil import normalizar
 
 PROMESA_HORA = re.compile(r"\b\d{1,2}[:h]\d{2}\b|llegar[aá]\s+(a las|en|hoy|mañana)|llegaremos|en \d+ (minutos|horas)", re.I)
 
@@ -72,3 +78,94 @@ def borrador_comunicacion(sector: str, litros: int, cisternas: List[str]) -> Dic
     except Exception as e:
         tracing.emitir("ia", "borrador_comunicacion", "fallback", {"sector": sector}, {"motivo": str(e)[:120]})
         return {"texto": local, "origen": "local (Gemini no disponible)"}
+
+
+# ------------------------------------------------------- recomendación de respuesta (orquestador)
+_SISTEMA_RECOMENDACION = (
+    "Redactas, en español claro y en máximo 3 frases, la ACCIÓN SUGERIDA para atender un reporte de falta de agua. "
+    "Usa SOLO los datos del JSON recibido (sector, prioridad, categoría, horas, personas, duplicados). "
+    "No menciones otros sectores, cisternas, litros ni cifras que no estén en los datos; no incluyas datos "
+    "personales; no prometas hora ni fecha de llegada; la decisión final es de una persona. "
+    "Devuelve únicamente un JSON {\"accion\": \"...\"}."
+)
+_RE_CORREO = re.compile(r"[\w.+-]+@[\w-]+\.[\w.-]+")
+_RE_TEL = re.compile(r"(?<!\w)\+?\d[\d\s().-]{6,}\d(?!\w)")
+_RE_ID_RECURSO = re.compile(r"\b[A-Z]{2,5}-\d{1,}\b")
+
+
+class SalidaRecomendacion(BaseModel):
+    """Esquema ESTRICTO de lo aceptado del modelo: un único campo; cualquier extra se rechaza."""
+    model_config = {"extra": "forbid"}
+    accion: str = Field(min_length=10, max_length=500)
+
+
+def _canon_numeros(texto: str) -> set:
+    salida = set()
+    for n in re.findall(r"\d+(?:[.,]\d+)?", texto):
+        try:
+            salida.add(f"{float(n.replace(',', '.')):g}")
+        except ValueError:
+            pass
+    return salida
+
+
+def validar_recomendacion(texto: str, datos: Dict[str, Any], sectores: List[str], cisternas: List[str]) -> str:
+    """Revalida con código lo que redactó el modelo. Lanza ErrorIA si no es seguro mostrarlo."""
+    t = (texto or "").strip()
+    if not t or len(t) > 500:
+        raise ia_gemini.ErrorIA("recomendación vacía o demasiado larga")
+    if _RE_CORREO.search(t) or _RE_TEL.search(t):
+        raise ia_gemini.ErrorIA("la recomendación contiene datos personales")
+    if PROMESA_HORA.search(t):
+        raise ia_gemini.ErrorIA("la recomendación promete una hora de llegada")
+    if not _canon_numeros(t) <= _canon_numeros(json.dumps(datos, ensure_ascii=False)):
+        raise ia_gemini.ErrorIA("la recomendación introduce cifras que no estaban en los datos")
+    nt = normalizar(t)
+    propio = normalizar(str(datos.get("sector") or ""))
+    resto = nt.replace(propio, " ") if propio else nt
+    for s in sectores:
+        ns = normalizar(s)
+        if ns and ns != propio and re.search(rf"\b{re.escape(ns)}\b", resto):
+            raise ia_gemini.ErrorIA(f"la recomendación menciona un sector no incluido en los datos ({s})")
+    if any(c.lower() in t.lower() for c in cisternas) or _RE_ID_RECURSO.search(t):
+        raise ia_gemini.ErrorIA("la recomendación menciona una cisterna que no está en sus datos")
+    return t
+
+
+def recomendacion_local(datos: Dict[str, Any]) -> str:
+    """Texto determinista (sin IA) de acción sugerida a partir de los datos ya calculados."""
+    partes = []
+    if datos.get("sector"):
+        det = []
+        if datos.get("categoria") is not None and datos.get("prioridad") is not None:
+            det.append(f"prioridad {datos['categoria']} ({datos['prioridad']:g} puntos)")
+        if datos.get("personas_afectadas") is not None:
+            det.append(f"{datos['personas_afectadas']} personas afectadas")
+        if datos.get("horas_sin_agua") is not None:
+            det.append(f"{datos['horas_sin_agua']:g} h sin agua")
+        partes.append(f"Atender {datos['sector']}" + (f": {', '.join(det)}." if det else "."))
+    else:
+        partes.append("El reporte no tiene sector confirmado: una persona debe elegirlo del catálogo antes de asignar recursos.")
+    if datos.get("posibles_duplicados"):
+        partes.append(f"Revisar {datos['posibles_duplicados']} posible(s) duplicado(s) antes de asignar.")
+    partes.append("Revisar la propuesta de asignación y decidir; la hora de llegada aún no está confirmada.")
+    return " ".join(partes)
+
+
+def recomendar_respuesta(datos: Dict[str, Any], sectores: List[str], cisternas: List[str]) -> Dict[str, Optional[str]]:
+    """Devuelve {"texto", "origen", "motivo_fallback"}. `origen` es la procedencia REAL del texto."""
+    local = recomendacion_local(datos)
+    if not _usar_gemini():
+        return {"texto": local, "origen": "reglas", "motivo_fallback": None}
+    try:
+        bruto = ia_gemini.generar_json(_SISTEMA_RECOMENDACION, json.dumps(datos, ensure_ascii=False), tarea="recomendar")
+        try:
+            salida = SalidaRecomendacion(**json.loads(bruto))
+        except (json.JSONDecodeError, ValidationError, TypeError) as e:
+            raise ia_gemini.ErrorIA(f"salida inválida: {type(e).__name__}") from e
+        texto = validar_recomendacion(salida.accion, datos, sectores, cisternas)
+        return {"texto": texto, "origen": "gemini", "motivo_fallback": None}
+    except Exception as e:
+        motivo = f"{type(e).__name__}: {e}"[:160]
+        tracing.emitir("ia", "recomendar_respuesta", "fallback", {"sector": datos.get("sector")}, {"motivo": motivo})
+        return {"texto": local, "origen": "reglas(fallback)", "motivo_fallback": motivo}

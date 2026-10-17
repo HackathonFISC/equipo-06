@@ -1,5 +1,19 @@
 # Changelog
 
+## 0.6.0 — 2026-10-17 (MVP integrado: fotos, mapa, IA orquestada, flota)
+### Añadido
+- Reportes con **coordenadas reales** (mapa) y hasta 3 **fotos** validadas por firma binaria, guardadas en `HIDRO360_MEDIA_DIR` (fuera de Git); solo el administrador las ve.
+- **Flota**: un token por vehículo (`X-Device-Token`, solo se guarda el hash), misiones con paradas, eventos de terminal idempotentes por `uid`, `/api/v1/mapa`.
+- **Orquestación IA** (`services/orquestador.py`, `workflow_ia.py`): validación → duplicados → clasificación → prioridad → recomendación → asignación; procedencia por etapa (`gemini`/`reglas`/`reglas(fallback)`); la misión solo nace con aprobación humana.
+- Interfaz: mapa en el formulario y en administración, fotos, «Recomendaciones IA», «Misiones y flota».
+- Firmware de terminal de cisterna (misión, botones táctiles, cola de eventos en NVS, reintentos); compila con `arduino-cli`; `scripts/simular_terminal.py`.
+- Raspberry: `requirements-servidor.txt`, `install.sh` idempotente, usuario sin privilegios, datos en `/var/lib/hidro360`, timer de copias, `hidro360-cli.sh`.
+- Prueba extremo a extremo con servidor uvicorn real y reinicio (`tests/test_e2e.py`).
+### Cambiado
+- Variables `HIDRO360_*` (alias `AGUA_CLARA_*` obsoletos). SCHEMA_VERSION 1.3.
+### Conocido
+- Gemini real y Raspberry/systemd sin probar; firmware sin probar en placa.
+
 ## 0.5.0 — 2026-10-17 (reorganización y roles)
 ### Cambiado
 - **Nombre oficial HIDRO360** (equipo TEAM VIFY AI) en interfaz, configuración, documentación, deploy y firmware. Las variables de entorno conservan el prefijo `AGUA_CLARA_` por compatibilidad.

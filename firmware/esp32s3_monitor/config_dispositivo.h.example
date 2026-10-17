@@ -1,12 +1,21 @@
-// HIDRO360 - configuracion del tablero ESP32-S3.
-// Copie este archivo a config_dispositivo.h y complete sus valores. config_dispositivo.h NO se versiona.
+// HIDRO360 - configuracion de la TERMINAL DE CISTERNA (ESP32-S3).
+// Copie este archivo a config_dispositivo.h y complete sus valores.
+// config_dispositivo.h NO se versiona (.gitignore). NUNCA suba credenciales ni tokens reales.
 #pragma once
+
+// --- WiFi (2.4 GHz) ---
 #define WIFI_SSID      "NOMBRE_DE_SU_WIFI"
-#define WIFI_PASSWORD  "CLAVE_DE_SU_WIFI"
-// IP de la Raspberry Pi (o PC) que ejecuta la API. HTTP en red local de confianza.
-#define API_BASE_URL   "http://192.168.1.50:8000"
-// Debe coincidir con AGUA_CLARA_DEVICE_TOKEN en el servidor (token de DISPOSITIVO, NO el del operador: solo lectura de /estado y confirmaciones).
-#define API_TOKEN      "CAMBIE_ESTE_TOKEN"
-#define DEVICE_ID      "hidro360-pantalla-01"
-#define POLL_MS        15000
-#define HTTP_TIMEOUT_MS 6000
+#define WIFI_PASS      "CLAVE_DE_SU_WIFI"
+
+// --- API (FastAPI en la Raspberry Pi) ---
+// Incluya el prefijo /api/v1 y NO termine con "/". HTTP en red local de confianza (el token viaja en claro).
+#define API_BASE_URL   "http://192.168.1.50:8000/api/v1"
+// Token DEL VEHICULO (uno por cisterna; se genera al registrar el dispositivo en el servidor).
+// La identidad se deriva del token en el servidor; CISTERNA_ID es solo para mostrar en pantalla.
+#define DEVICE_TOKEN   "CAMBIE_ESTE_TOKEN"
+#define CISTERNA_ID    "CIS-01"
+
+// --- Intervalos (milisegundos) ---
+#define MISION_POLL_MS  10000   // sondeo de GET /dispositivo/mision
+#define LATIDO_MS       30000   // POST /dispositivo/latido
+#define HTTP_TIMEOUT_MS  5000   // conexion y lectura (la pantalla no responde al toque durante una peticion)

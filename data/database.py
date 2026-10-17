@@ -28,10 +28,22 @@ CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS usuarios (
     id TEXT PRIMARY KEY, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS fotos (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS dispositivos (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS misiones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS eventos_mision (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS recomendaciones (
+    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
 """
 
-# `usuarios` NO está aquí: reiniciar la demo no debe borrar las cuentas de administración.
-TABLAS = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria"]
+# `usuarios`, `dispositivos` y `fotos` NO están aquí: reiniciar la demo no debe borrar cuentas, identidades
+# de terminales ni archivos subidos. Misiones/eventos/recomendaciones sí se reinician con los datos de ejemplo.
+TABLAS = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria",
+          "misiones", "eventos_mision", "recomendaciones"]
 
 
 _local = threading.local()

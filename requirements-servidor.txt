@@ -1,0 +1,10 @@
+# Dependencias para EJECUTAR en servidor (Raspberry Pi / Linux aarch64): UI web + API + Gemini opcional.
+# Fuente única: requirements.txt las incluye con «-r». Añada aquí (no en requirements.txt) toda dependencia de ejecución nueva.
+# NO incluye flet-desktop (ventana nativa, innecesaria en un servidor) ni pytest/httpx (solo pruebas).
+flet~=1.0.4
+flet-web~=1.0.4          # python app.py --web
+flet-map~=1.0.4         # mapas (OpenStreetMap; el navegador del cliente necesita internet para las teselas)
+google-genai>=2.0        # IA opcional (Gemini); sin GEMINI_API_KEY se usa el modo local
+pydantic>=2.9
+fastapi>=0.110
+uvicorn>=0.29

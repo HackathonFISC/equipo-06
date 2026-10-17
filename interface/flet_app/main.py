@@ -36,17 +36,20 @@ GRUPOS_ADMIN = [
     ("OPERACIÓN", [
         ("panel", "Panel", ft.Icons.DASHBOARD, "panel"),
         ("bandeja", "Bandeja de reportes", ft.Icons.INBOX, "bandeja"),
+        ("mapa", "Mapa", ft.Icons.MAP, "mapa"),
+        ("recomendaciones", "Recomendaciones IA", ft.Icons.AUTO_AWESOME, "recomendaciones"),
         ("revision", "Revisión", ft.Icons.FACT_CHECK, "revision"),
         ("duplicados", "Ubicación y duplicados", ft.Icons.PLACE, "duplicados"),
-        ("prioridad", "Priorización", ft.Icons.INSIGHTS, "prioridad"),
-        ("plan", "Planificación y aprobación", ft.Icons.LOCAL_SHIPPING, "plan"),
+        ("prioridad", "Prioridades", ft.Icons.INSIGHTS, "prioridad"),
+        ("plan", "Plan y aprobación", ft.Icons.LOCAL_SHIPPING, "plan"),
         ("comunicacion", "Comunicación", ft.Icons.MAIL, "comunicacion")]),
+    ("FLOTA", [
+        ("misiones", "Misiones y flota", ft.Icons.ROUTE, "misiones")]),
     ("SEGUIMIENTO", [
         ("metricas", "Métricas operativas", ft.Icons.BAR_CHART, "metricas"),
         ("auditoria", "Auditoría", ft.Icons.HISTORY, "auditoria")]),
     ("SISTEMA", [
-        ("configuracion", "Configuración e integraciones", ft.Icons.SETTINGS, "configuracion"),
-        ("dispositivos", "Estado de dispositivos", ft.Icons.DEVICES, "dispositivos")]),
+        ("configuracion", "Configuración e integraciones", ft.Icons.SETTINGS, "configuracion")]),
     ("DIAGNÓSTICO Y DESARROLLO", [
         ("trazas", "Trazas", ft.Icons.TIMELINE, "trazas"),
         ("impacto", "Evaluación e impacto", ft.Icons.FACT_CHECK_OUTLINED, "impacto"),

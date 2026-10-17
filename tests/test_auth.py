@@ -130,11 +130,17 @@ def _args_ficticios(fn):
 FUNCIONES_ADMIN = ["corregir_y_confirmar", "rechazar_reporte", "resolver_duplicado", "generar_plan", "editar_plan",
                    "decidir_plan", "cargar_datos_demo", "listar_reportes", "obtener_reporte", "sugerir_duplicados",
                    "decisiones_duplicado", "calcular_prioridades", "visibilidad_sectores", "listar_planes",
-                   "obtener_plan", "explicar_prioridad_ia", "redactar_borrador_ia"]
+                   "obtener_plan", "explicar_prioridad_ia", "redactar_borrador_ia",
+                   "obtener_foto", "registrar_dispositivo", "rotar_token", "desactivar_dispositivo",
+                   "listar_dispositivos", "crear_mision", "crear_mision_desde_plan", "listar_misiones",
+                   "obtener_mision", "cancelar_mision", "listar_eventos", "datos_mapa"]
 # Sin rol de usuario por diseño (ver comentarios en workflow.py)
 FUNCIONES_ABIERTAS = {"listar_sectores", "listar_cisternas", "estado_actual", "registrar_confirmacion_dispositivo",
                       "crear_reporte", "consultar_reporte_publico", "avisos_publicos", "reiniciar_limites",
-                      "operacion"}
+                      "operacion",
+                      # terminales de vehículo: se autentican con su token (X-Device-Token), no con rol de usuario
+                      "autenticar_dispositivo", "dispositivo_latido", "dispositivo_mision_activa",
+                      "dispositivo_recibir_eventos"}
 
 
 def test_ninguna_funcion_publica_de_workflow_queda_sin_clasificar():
@@ -178,7 +184,9 @@ def test_responsable_auditado_es_el_usuario_autenticado():
 
 
 # ------------------------------------------------------------------------ API: rutas
-EXENTAS = {"/api/v1/salud", "/api/v1/estado", "/api/v1/dispositivos/confirmaciones", "/api/v1/auth/login"}
+EXENTAS = {"/api/v1/salud", "/api/v1/estado", "/api/v1/dispositivos/confirmaciones", "/api/v1/auth/login",
+           # terminal de vehículo (token propio): su 401/403 se prueba en tests/test_flota.py
+           "/api/v1/dispositivo/mision", "/api/v1/dispositivo/eventos", "/api/v1/dispositivo/latido"}
 SOLO_AUTENTICADAS = {"/api/v1/auth/logout", "/api/v1/auth/yo"}
 
 
@@ -314,7 +322,7 @@ def test_portal_publico_crea_y_consulta_sin_credenciales_ni_filtraciones(monkeyp
     g = c.get(f"/api/v1/publico/reportes/{codigo.lower()}")
     assert g.status_code == 200
     cuerpo = g.json()
-    assert set(cuerpo) == {"codigo", "estado_publico", "sector", "fecha_creacion"}
+    assert set(cuerpo) == {"codigo", "estado_publico", "sector", "fecha_creacion", "tiene_ubicacion", "n_fotos"}
     assert cuerpo["estado_publico"].startswith("Recibido") and cuerpo["sector"] is None
     for texto in (r.text, g.text):
         assert "Maria" not in texto and "6000" not in texto and "casa azul" not in texto

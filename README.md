@@ -20,7 +20,7 @@ Requiere Python 3.10+ (probado con 3.14).
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
-pip install -r requirements.txt
+pip install -r requirements.txt      # desarrollo; el servidor Raspberry usa requirements-servidor.txt
 python app.py                  # ventana de escritorio
 python app.py --web            # o en el navegador: http://127.0.0.1:8501
 pytest -q                      # pruebas (el resultado vigente lo da este comando)
@@ -46,7 +46,18 @@ python -m scripts.verificar_gemini                  # lista modelos y hace una l
 `pytest -q` · `python -m evaluation.run_cases` (informe en `docs/RESULTADOS_EVALUACION.md`) · `python -m evaluation.run_impacto` (`docs/EXPERIMENTO_IMPACTO.md`). Qué está y qué no está probado: `docs/PRUEBAS.md`.
 
 ## API y dispositivos
-`uvicorn api.main:app --port 8000` → `/docs`. Sin tokens solo acepta localhost. Contrato: `docs/API.md`. ESP32-S3: `firmware/esp32s3_monitor/` (sin compilar); Raspberry: `deploy/raspberry/` (sin probar); ver `docs/HARDWARE.md`.
+`uvicorn api.main:app --port 8000` → `/docs`. Sin tokens solo acepta localhost. Contrato: `docs/API.md`. ESP32-S3: `firmware/esp32s3_monitor/` (sin compilar); ver `docs/HARDWARE.md`. Cada cisterna usa un token propio: `python -m scripts.registrar_dispositivo CIS-01`.
+
+## Variables de entorno
+Prefijo `HIDRO360_` (`HIDRO360_DB`, `HIDRO360_TRACE`, `HIDRO360_MEDIA_DIR`, `HIDRO360_API_TOKEN`, `HIDRO360_DEVICE_TOKEN`) más `AI_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_MAX_REINTENTOS`. Los nombres antiguos `AGUA_CLARA_*` siguen funcionando como alias **obsoletos** (si existen ambos, gana `HIDRO360_*`). Ver `.env.example` y `docs/INSTALACION.md`.
+
+## Desplegar en Raspberry Pi (red local)
+```bash
+sudo git clone <URL-del-repositorio> /opt/hidro360 && cd /opt/hidro360
+sudo bash deploy/raspberry/install.sh      # usuario hidro360, venv (requirements-servidor.txt), env 600 con tokens aleatorios, systemd
+journalctl -u hidro360-api -f              # logs
+```
+Panel en `http://<IP-de-la-Raspberry>:8501`, API en `:8000`. **Solo red local: no exponga estos puertos a Internet** (HTTP sin cifrar). Los mapas (OpenStreetMap) necesitan internet en el navegador del cliente. **Sin probar en una Raspberry real ni con systemd**; pasos, firewall y copias en `docs/INSTALACION.md` §9.
 
 ## Mapa del repositorio
 `interface/flet_app/` UI · `services/` lógica de negocio · `api/` FastAPI · `models/` contratos · `data/` SQLite y datos ficticios · `evaluation/` casos e impacto · `scripts/` utilidades · `firmware/`, `deploy/` hardware · `assets/` logo · `LOGO/` logo original y `PROTOTIPO/` referencia visual · `docs/` documentación · **`AGENTS.md`** guía para asistentes y personas · `.claude/skills/` skills de Claude Code.

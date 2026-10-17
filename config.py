@@ -26,12 +26,19 @@ def _cargar_dotenv(ruta: Path) -> None:
 
 _cargar_dotenv(BASE_DIR / ".env")
 
-# Base de datos SQLite local (se puede cambiar con AGUA_CLARA_DB, p. ej. para pruebas)
-DB_PATH = Path(os.environ.get("AGUA_CLARA_DB", BASE_DIR / "agua_clara.db"))
+
+def _env_compat(nombre: str, antiguo: str, defecto: str = "") -> str:
+    """Lee HIDRO360_<X>; si no existe (o está vacía) cae a la variable antigua AGUA_CLARA_<X>, obsoleta pero
+    aceptada por compatibilidad. Si ambas existen gana HIDRO360_*."""
+    return os.environ.get(nombre, "").strip() or os.environ.get(antiguo, "").strip() or defecto
+
+
+# Base de datos SQLite local (HIDRO360_DB; alias obsoleto AGUA_CLARA_DB, p. ej. para pruebas)
+DB_PATH = Path(_env_compat("HIDRO360_DB", "AGUA_CLARA_DB") or BASE_DIR / "agua_clara.db")
 
 APP_NAME = "HIDRO360"
 EQUIPO = "TEAM VIFY AI"
-APP_VERSION = "0.5.0"
+APP_VERSION = "0.6.0"
 VERSION_REGLAS = "reglas-2026.10.a"   # cambia si cambian pesos, topes o reglas deterministas
 
 # Parámetros del cálculo de prioridad (deterministas y visibles en la interfaz)
@@ -54,7 +61,11 @@ VULN_SERVICIO_ESENCIAL = 1.0     # hospital/centro de salud/escuela confirmado e
 VULN_PERSONAS_VULNERABLES = 0.75  # adultos mayores, niños pequeños, enfermos mencionados y confirmados
 
 # Trazas técnicas JSONL (distintas de la auditoría de negocio)
-TRACE_PATH = Path(os.environ.get("AGUA_CLARA_TRACE", BASE_DIR / "logs" / "trazas.jsonl"))
+# Fotografías subidas: fuera del código y de Git. En la Raspberry: /var/lib/hidro360/media.
+MEDIA_DIR = Path(_env_compat("HIDRO360_MEDIA_DIR", "AGUA_CLARA_MEDIA_DIR") or BASE_DIR / "media")
+MAX_FOTOS_POR_REPORTE = 3
+MAX_BYTES_FOTO = 3 * 1024 * 1024
+TRACE_PATH = Path(_env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE") or BASE_DIR / "logs" / "trazas.jsonl")
 
 # Envío duplicado accidental: mismo texto en menos de N segundos => se devuelve el reporte ya creado
 IDEMPOTENCIA_SEGUNDOS = 30
@@ -92,5 +103,6 @@ AI_MAX_REINTENTOS = lambda: int(_env("AI_MAX_REINTENTOS", "1"))  # noqa: E731  (
 
 # Autenticación de la API (opcional pero recomendada fuera de localhost).
 # Sin token configurado, la API solo acepta peticiones de escritura desde 127.0.0.1.
-API_TOKEN = lambda: _env("AGUA_CLARA_API_TOKEN")        # operadores (escritura)  # noqa: E731
-DEVICE_TOKEN = lambda: _env("AGUA_CLARA_DEVICE_TOKEN")  # dispositivos (lectura de /estado y confirmaciones)  # noqa: E731
+# HIDRO360_* gana; AGUA_CLARA_* sigue funcionando como alias obsoleto. Se leen en cada llamada (las pruebas los cambian).
+API_TOKEN = lambda: _env_compat("HIDRO360_API_TOKEN", "AGUA_CLARA_API_TOKEN")        # operadores (escritura)  # noqa: E731
+DEVICE_TOKEN = lambda: _env_compat("HIDRO360_DEVICE_TOKEN", "AGUA_CLARA_DEVICE_TOKEN")  # dispositivo heredado (lectura de /estado y confirmaciones)  # noqa: E731

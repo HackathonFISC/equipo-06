@@ -1,6 +1,6 @@
 # AGENTS.md — HIDRO360 (TEAM VIFY AI)
 
-> Nombre oficial: **HIDRO360** (antes «Agua Clara AI»). Las variables de entorno conservan el prefijo `AGUA_CLARA_` por compatibilidad. Roles: portal público sin cuenta + administración con login; ver `docs/SEGURIDAD.md`.
+> Nombre oficial: **HIDRO360** (antes «Agua Clara AI»). Las variables de entorno usan el prefijo `HIDRO360_`; los alias antiguos `AGUA_CLARA_*` siguen funcionando (obsoletos). Roles: portal público sin cuenta + administración con login; ver `docs/SEGURIDAD.md`.
 
 Guía para asistentes de programación y personas. Describe la arquitectura **realmente implementada**; si el código y este archivo discrepan, gana el código: corrija este archivo en el mismo cambio.
 
@@ -15,6 +15,8 @@ interface/flet_app/  UI Flet (presentación)  ──┐
 api/main.py          API FastAPI (dispositivos, integraciones) ──┤──►  services/workflow.py  (ÚNICA puerta de negocio)
                                               │            │
                                               │            ├─ services/ingest.py       interpretar texto (reglas | Gemini + fallback)
+                                              │            ├─ services/workflow_ia.py + orquestador.py  flujo IA verificable → Recomendación → (aprobación humana) → Misión
+                                              │            ├─ services/fotos.py        validación por firma y almacenamiento en MEDIA_DIR
                                               │            ├─ services/ia_gemini.py    proveedor Gemini (SDK google-genai, cuota, reintentos)
                                               │            ├─ services/ia_tareas.py    resumen/borrador asistidos (validados)
                                               │            ├─ services/geoloc.py       sector + duplicados
@@ -48,7 +50,7 @@ python -m scripts.verificar_gemini [--sin-llamada]
 ```
 
 ## 4. Variables de entorno (ver `.env.example`; `config.py` lee `.env` sin pisar el entorno)
-`AI_PROVIDER` (auto|local|gemini), `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_MAX_REINTENTOS`, `AGUA_CLARA_DB`, `AGUA_CLARA_TRACE`, `AGUA_CLARA_API_TOKEN`, `AGUA_CLARA_DEVICE_TOKEN`. **Nunca** claves en código, tests, README, HTML ni trazas. `.env` está en `.gitignore`.
+`AI_PROVIDER` (auto|local|gemini), `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_MAX_REINTENTOS`, `HIDRO360_DB`, `HIDRO360_TRACE`, `HIDRO360_MEDIA_DIR` (fotos), `HIDRO360_API_TOKEN`, `HIDRO360_DEVICE_TOKEN` (alias `AGUA_CLARA_*`). **Nunca** claves en código, tests, README, HTML ni trazas. `.env` está en `.gitignore`.
 
 ## 5. Reglas para modificar el código
 1. Inspeccione antes de editar (`git status`, buscar referencias). No sobrescriba cambios sin confirmar del usuario.
@@ -63,7 +65,7 @@ python -m scripts.verificar_gemini [--sin-llamada]
 Proveedor único: `services/ia_gemini.py` (SDK oficial `google-genai`). `AI_PROVIDER=auto` usa Gemini solo con `GEMINI_API_KEY`. Si falla (sin red, 429, 401/403, JSON inválido, timeout) → **modo local**, declarado como `reglas(fallback)` y con traza `fallback`; nunca se presenta como Gemini. Texto del ciudadano = dato no confiable: frases tipo instrucción se excluyen, teléfonos/correos se redactan antes de enviar, la salida se valida con `SalidaIA` (extra=forbid) y se revalida con código (sector del catálogo, evidencia literal). Gemini **no** aprueba, cierra, asigna ni calcula prioridad. La confianza del modelo es subjetiva, no calibrada.
 
 ## 7. API (resumen; detalle en `docs/API.md`)
-`/api/v1/...` Público (sin credenciales): `POST /publico/reportes`, `GET /publico/reportes/{codigo}`, `GET /publico/avisos`, `POST /auth/login`, `GET /salud`. Administrador (sesión `Bearer` o token de servicio `AGUA_CLARA_API_TOKEN`): todo lo demás (reportes, confirmar, rechazar, duplicados, planes, edición, decisión, prioridades, visibilidad, auditoría, trazas). Dispositivo (`AGUA_CLARA_DEVICE_TOKEN`): solo `GET /estado` y `POST /dispositivos/confirmaciones`. El responsable de la auditoría es el usuario autenticado.
+`/api/v1/...` Público (sin credenciales): `POST /publico/reportes`, `GET /publico/reportes/{codigo}`, `GET /publico/avisos`, `POST /auth/login`, `GET /salud`. Administrador (sesión `Bearer` o token de servicio `HIDRO360_API_TOKEN`): todo lo demás (reportes, fotos, mapa, confirmar, rechazar, duplicados, planes, misiones, flota, recomendaciones IA, auditoría, trazas). Terminal de cisterna (`X-Device-Token`, un token por vehículo, identidad derivada del token): solo `GET /dispositivo/mision`, `POST /dispositivo/eventos` (idempotente por `uid`) y `POST /dispositivo/latido`. El token compartido antiguo solo sirve para `GET /estado` y `POST /dispositivos/confirmaciones`. El responsable de la auditoría es el usuario autenticado.
 
 ## 8. Base de datos (detalle en `docs/BASE_DE_DATOS.md`)
 SQLite, tablas documento (`id` + JSON) creadas con `CREATE TABLE IF NOT EXISTS`. **Migraciones:** como el contenido es JSON validado por Pydantic, los campos nuevos deben tener valor por defecto (lectura retrocompatible); un cambio incompatible exige un script de migración reversible (carpeta `scripts/migraciones/`, a crear cuando haga falta) y copia previa de `agua_clara.db`. Nunca borre la base real; `cargar_datos_demo` es la única vía de reinicio y la UI pide confirmación.

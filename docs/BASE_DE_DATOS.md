@@ -12,6 +12,14 @@ Todas las tablas guardan un documento JSON validado por Pydantic en la columna `
 | `planes` | `id` (autoinc.) | `PropuestaPlan` (asignaciones, pendientes, prioridades, borradores, estado, versión, método) |
 | `decisiones_duplicado` | `id` | decisión humana sobre un posible duplicado |
 | `auditoria` | `id` | `EntradaAuditoria` con `hash_previo` y `hash` encadenados |
+| `usuarios` | `id` (TEXT) | cuentas (scrypt); **no** se borra al recargar la demo |
+| `fotos` | `id` (hex aleatorio) | `Foto` (reporte, tipo MIME por firma, bytes, sha256). El archivo está en `config.MEDIA_DIR/<id>.<ext>` (fuera de Git); **no** se borra al recargar la demo (pueden quedar huérfanas si se borran sus reportes) |
+| `dispositivos` | `id` = `cisterna_id` | `Dispositivo` + `token_hash` (SHA-256 del token de 256 bits; nunca el token); **no** se borra al recargar la demo |
+| `misiones` | `id` (autoinc.) | `Mision` con paradas y su estado (`ficticio` si la cisterna lo es) |
+| `eventos_mision` | `id` (autoinc.) | `RegistroEvento` (uid único por evento aplicado → idempotencia; los rechazados se guardan con el motivo en `nota`) |
+| `recomendaciones` | `id` (autoinc.) | `Recomendacion` de IA (agente de orquestación) |
+
+`cargar_datos_demo` vacía solo `TABLAS` (sectores, cisternas, reportes, planes, decisiones, auditoría, misiones, eventos, recomendaciones). Los datos operativos (usuarios, dispositivos, fotos) sobreviven; los datos sintéticos llevan `ficticio=true`.
 
 ## Transacciones
 `db.transaccion()` abre `BEGIN IMMEDIATE` (serializa escritores), es reentrante y revierte todo si hay excepción. Cada función mutante de `workflow.py` (`@operacion`) escribe el cambio **y** su entrada de auditoría en la misma transacción. Las trazas JSONL son un archivo aparte y no forman parte de la transacción.

@@ -6,6 +6,7 @@
 - El token de sesión vive solo en memoria de este objeto (no se escribe en disco ni en registros).
 - Ocultar botones no es seguridad: la autorización real se comprueba en el backend (services.auth)."""
 
+import asyncio
 import traceback
 import uuid
 from contextlib import contextmanager
@@ -32,6 +33,8 @@ class Ctx:
         self._mostrar: Optional[Callable[[str], None]] = None
         self.avisos: list = []                  # historial de avisos (útil en pruebas)
         self._token: Optional[str] = None       # solo en memoria
+        self._servicios: dict = {}              # servicios de Flet (selector de archivos, portapapeles): uno por sesión de pantalla
+        self._auto: Optional[object] = None     # marca del auto-refresco vigente
 
     # ------------------------------------------------------------------- sesión
     @property
@@ -133,6 +136,36 @@ class Ctx:
         if ok_msg:
             self.toast(ok_msg, "ok")
         return True, valor
+
+    # ---------------------------------------------------------------- servicios
+    def servicio(self, clave: str, fabrica: Callable[[], Any]) -> Any:
+        """Servicio de Flet reutilizable (FilePicker, Clipboard). Sin Page (pruebas) devuelve None."""
+        if self.page is None:
+            return None
+        s = self._servicios.get(clave)
+        if s is None:
+            s = self._servicios[clave] = fabrica()
+            self.page.services.append(s)
+        return s
+
+    def auto_refrescar(self, pagina: str, segundos: float, accion: Callable[[], None]) -> None:
+        """Repite `accion` cada `segundos` mientras la pantalla `pagina` siga abierta (una sola tarea vigente por contexto).
+        `accion` debe refrescar solo listas (no reconstruir formularios) para no pisar lo que la persona escribe."""
+        if self.page is None:
+            return
+        marca = object()
+        self._auto = marca
+
+        async def ciclo():
+            while self._auto is marca and self.pagina_actual == pagina:
+                await asyncio.sleep(segundos)
+                if self._auto is not marca or self.pagina_actual != pagina:
+                    break
+                try:
+                    accion()
+                except Exception:
+                    traceback.print_exc()
+        self.page.run_task(ciclo)
 
     # ------------------------------------------------------------------ diálogos
     def dialogo(self, titulo: str, contenido: ft.Control, acciones=None) -> None:

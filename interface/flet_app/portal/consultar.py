@@ -13,6 +13,11 @@ from services import workflow
 def _resultado(d: dict) -> ft.Control:
     filas = [("Código", d.get("codigo")), ("Estado", d.get("estado_publico")), ("Sector", d.get("sector")),
              ("Recibido", datos.fecha_legible(d.get("fecha_creacion")))]
+    if "tiene_ubicacion" in d:       # solo si el servidor lo informa; nunca se muestran coordenadas ni fotos
+        filas.append(("Ubicación", "Marcada en el mapa" if d.get("tiene_ubicacion") else "Sin ubicación en el mapa"))
+    if "n_fotos" in d:
+        n = int(d.get("n_fotos") or 0)
+        filas.append(("Fotos", "Sin fotos" if n == 0 else f"{n} foto{'s' if n != 1 else ''} recibida{'s' if n != 1 else ''}"))
     cuerpo = [ft.Row([ft.Text(k, size=12.5, color=T.MUTED, width=90),
                       ft.Text(str(v), size=15, weight=ft.FontWeight.W_700 if k == "Estado" else ft.FontWeight.W_400,
                               color=T.NAVY if k == "Estado" else T.INK, selectable=True, expand=True)], spacing=10)

@@ -139,10 +139,28 @@ def test_barra_del_portal_ofrece_acceso_discreto_y_la_consola_cierre_de_sesion()
     fuente = open(m.__file__, encoding="utf-8").read()
     assert "Acceso administración" in fuente and "Cerrar sesión" in fuente and "Portal público" in fuente
     assert m.GRUPO_DIAGNOSTICO == "DIAGNÓSTICO Y DESARROLLO"
-    assert [g for g, _ in m.GRUPOS_ADMIN] == ["OPERACIÓN", "SEGUIMIENTO", "SISTEMA", "DIAGNÓSTICO Y DESARROLLO"]
+    assert [g for g, _ in m.GRUPOS_ADMIN] == ["OPERACIÓN", "FLOTA", "SEGUIMIENTO", "SISTEMA", "DIAGNÓSTICO Y DESARROLLO"]
 
 
 def test_paginas_de_diagnostico_estan_solo_en_la_consola():
     claves_diag = {k for k, *_ in dict(app.GRUPOS_ADMIN)[app.GRUPO_DIAGNOSTICO]}
     assert claves_diag == {"trazas", "impacto", "gemini", "datos_ejemplo"}
     assert not claves_diag & app.CLAVES_PORTAL
+
+
+def test_paginas_nuevas_son_solo_administrativas_y_no_hay_pagina_de_dispositivos_aparte():
+    claves = {k for k, *_ in app.PAGINAS}
+    assert {"mapa", "recomendaciones", "misiones"} <= claves and "dispositivos" not in claves
+    assert not {"mapa", "recomendaciones", "misiones"} & app.CLAVES_PORTAL
+
+
+def test_cuenta_usuario_no_llega_a_mapa_recomendaciones_ni_misiones(anonimo):
+    auth.crear_usuario("admin1", CLAVE, auth.Rol.ADMIN)
+    auth.crear_usuario("pepe", CLAVE, auth.Rol.USUARIO)
+    p = pagina(anonimo, "login")
+    campo(p, "Usuario").value = "pepe"
+    campo(p, "Contraseña").value = CLAVE
+    boton(p, "Iniciar sesión").on_click(None)
+    for clave in ("mapa", "recomendaciones", "misiones", "bandeja"):
+        assert "Administración HIDRO360" in textos(pagina(anonimo, clave)), clave
+        assert anonimo.destino_tras_login == clave and not anonimo.es_admin

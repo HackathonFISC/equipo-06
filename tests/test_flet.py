@@ -343,3 +343,332 @@ def test_error_en_una_pagina_no_tumba_la_aplicacion(ctx, monkeypatch):
     mod = importlib.import_module("interface.flet_app.admin.panel")
     monkeypatch.setattr(mod, "build", lambda c: (_ for _ in ()).throw(RuntimeError("boom")))
     assert "No se pudo mostrar" in textos(pagina(ctx, "panel"))
+
+
+# ===================================== PORTAL CON MAPA Y FOTOS · MAPA · IA · MISIONES (UI nueva)
+import base64
+import struct
+import zlib
+from dataclasses import dataclass
+from types import SimpleNamespace
+
+from interface.flet_app import mapa as mapa_ui
+from interface.flet_app.portal import reportar as portal_reportar
+from services import workflow_ia
+
+
+def png_valido(color: int = 0) -> bytes:
+    """PNG real de 1x1 píxel (la firma binaria es lo que valida el backend)."""
+    def trozo(tipo, datos):
+        c = struct.pack(">I", len(datos)) + tipo + datos
+        return c + struct.pack(">I", zlib.crc32(tipo + datos) & 0xFFFFFFFF)
+    return (b"\x89PNG\r\n\x1a\n" + trozo(b"IHDR", struct.pack(">IIBBBBB", 1, 1, 8, 2, 0, 0, 0))
+            + trozo(b"IDAT", zlib.compress(bytes([0, color, 0, 0]))) + trozo(b"IEND", b""))
+
+
+@dataclass
+class ArchivoDePrueba:
+    """DOBLE DE PRUEBA de ft.FilePickerFile (el selector real necesita una ventana)."""
+    name: str
+    bytes: bytes
+    size: int = 0
+
+    def __post_init__(self):
+        self.size = len(self.bytes)
+
+
+class PaginaFalsa:
+    """DOBLE DE PRUEBA de ft.Page: lo mínimo para que Ctx muestre diálogos y avisos sin ventana."""
+    def __init__(self):
+        self.services = []
+        self.mostrados = []
+
+    def update(self):
+        pass
+
+    def show_dialog(self, d):
+        self.mostrados.append(d)
+
+    def pop_dialog(self):
+        pass
+
+    def run_task(self, *a, **k):
+        pass
+
+
+def zona_portal(p):
+    z = buscar(p, ft.Container, lambda c: isinstance(c.data, dict) and "procesar" in c.data)
+    assert z is not None
+    return z.data
+
+
+def todas_las_imagenes(raiz):
+    return [c for c in recorrer(raiz) if isinstance(c, ft.Image)]
+
+
+def test_portal_reporta_con_ubicacion_del_mapa_y_dos_fotos(portal):
+    p = pagina(portal, "reportar")
+    d = zona_portal(p)
+    campo(p, "Cuéntenos").value = "Sin agua en Chame desde ayer, somos 12 familias"
+    d["selector"]._tap(SimpleNamespace(coordinates=SimpleNamespace(latitude=8.6, longitude=-79.88)))   # clic en el mapa
+    assert d["selector"].punto == (8.6, -79.88)
+    d["procesar"]([ArchivoDePrueba("a.png", png_valido(1)), ArchivoDePrueba("b.PNG", png_valido(2))])
+    assert len(d["fotos"].items) == 2 and len(todas_las_imagenes(p)) == 2
+    boton(p, "Enviar reporte").on_click(None)
+    r = workflow.listar_reportes()[-1]
+    assert (r.lat, r.lng) == (8.6, -79.88) and r.ubicacion_fuente == "mapa" and len(r.foto_ids) == 2
+    t = textos(p)
+    assert r.codigo_seguimiento in t and "ubicación en el mapa y 2 fotos" in t and "Copiar código" in todo_el_texto(p)
+    data, mime = workflow.obtener_foto(r.id, r.foto_ids[0])          # persistente y recuperable por el administrador
+    assert mime == "image/png" and data.startswith(b"\x89PNG")
+    # consulta pública: solo informa si hay ubicación y cuántas fotos; nunca coordenadas
+    c = pagina(portal, "consultar")
+    campo(c, "Código").value = r.codigo_seguimiento
+    boton(c, "Consultar").on_click(None)
+    tc = textos(c)
+    assert "Marcada en el mapa" in tc and "2 fotos" in tc and "8.6" not in tc and "79.88" not in tc
+
+
+def test_portal_sin_ubicacion_si_elige_no_saber_ubicarlo(portal):
+    p = pagina(portal, "reportar")
+    d = zona_portal(p)
+    campo(p, "Cuéntenos").value = "No hay agua cerca de la escuela de Arraiján"
+    d["selector"].fijar(8.9, -79.65)                                   # había marcado un punto…
+    boton(p, "No sé ubicarlo en el mapa").on_click(None)               # …y luego prefiere no usarlo
+    assert d["selector"].punto is None and "Sin ubicación en el mapa" in textos(p)
+    boton(p, "Enviar reporte").on_click(None)
+    r = workflow.listar_reportes()[-1]
+    assert r.lat is None and r.lng is None and r.ubicacion_fuente is None
+    assert "Se guardó también" not in textos(p)
+
+
+def test_portal_valida_fotos_en_el_cliente_de_forma_amistosa(portal):
+    p = pagina(portal, "reportar")
+    d = zona_portal(p)
+    grande = ArchivoDePrueba("grande.jpg", b"\xff\xd8\xff" + b"0" * (portal_reportar.MAX_BYTES + 1))
+    d["procesar"]([ArchivoDePrueba("doc.pdf", b"%PDF-1.4 x"), grande, ArchivoDePrueba("vacia.jpg", b"")])
+    t = textos(p)
+    assert not d["fotos"].items
+    assert "no es una foto admitida" in t and "el máximo es" in t and "No pudimos leer" in t
+    d["procesar"]([ArchivoDePrueba(f"f{i}.png", png_valido(i)) for i in range(4)])
+    assert len(d["fotos"].items) == portal_reportar.MAX_FOTOS and "hasta 3 fotos" in textos(p)
+    quitar = buscar(p, ft.TextButton, lambda c: c.content == "Quitar")
+    quitar.on_click(None)
+    assert len(d["fotos"].items) == portal_reportar.MAX_FOTOS - 1
+
+
+def test_portal_errores_del_backend_se_muestran_en_espanol(portal):
+    p = pagina(portal, "reportar")
+    d = zona_portal(p)
+    campo(p, "Cuéntenos").value = "Sin agua en El Coco"
+    d["procesar"]([ArchivoDePrueba("falsa.jpg", b"esto no es una imagen de verdad")])   # pasa el filtro de cliente; el backend la rechaza por firma
+    antes = len(workflow.listar_reportes())
+    boton(p, "Enviar reporte").on_click(None)
+    assert len(workflow.listar_reportes()) == antes
+    t = textos(p)
+    assert "No pudimos registrar su reporte" in t and "imagen" in t.lower() and portal.avisos[-1][0] == "bad"
+    d["fotos"].items.clear()
+    d["selector"].fijar(10.0, -70.0)                                                     # fuera de Panamá Oeste: lo rechaza el backend
+    boton(p, "Enviar reporte").on_click(None)
+    assert len(workflow.listar_reportes()) == antes and portal.avisos[-1][0] == "bad"
+
+
+def test_portal_con_mapa_no_muestra_nada_tecnico(portal):
+    t = todo_el_texto(pagina(portal, "reportar")).lower()
+    for palabra in PROHIBIDAS + ("recomendaci", "misión"):
+        assert palabra not in t, palabra
+
+
+def test_mapa_no_inventa_coordenadas():
+    pts = mapa_ui.puntos_de_mapa({"reportes": [{"id": 1, "lat": None, "lng": None}, {"id": 2, "lat": 8.9, "lng": -79.7, "estado": "confirmado"}, {"id": 3, "lat": 400, "lng": 1}],
+                                  "cisternas": [{"id": "C1", "lat": None, "lng": None}], "paradas": [{"orden": 1, "lat": 8.8, "lng": -79.7}, {"orden": 2, "lat": None, "lng": None}]})
+    assert [r["id"] for r in pts["reportes"]] == [2] and pts["cisternas"] == [] and [p["orden"] for p in pts["paradas"]] == [1]
+    assert mapa_ui.puntos_de_mapa(None) == {"reportes": [], "cisternas": [], "paradas": []}
+    assert "no trae ubicación" in textos(mapa_ui.mini(None, None))
+
+
+def test_pagina_mapa_con_datos_reales_y_vacia(ctx, monkeypatch):
+    r = workflow.crear_reporte("Sin agua en Chame, 20 familias", "t", lat=8.6, lng=-79.88)
+    p = pagina(ctx, "mapa")
+    t = textos(p)
+    assert "No se pudo mostrar" not in t and "Reportes en el mapa" in t and "Mapa operativo" in t
+    if mapa_ui.disponible():
+        import flet_map as fm
+        assert [c for c in recorrer(p) if isinstance(c, fm.Map)] or any(isinstance(getattr(c, "content", None), fm.Map) for c in recorrer(p))
+    monkeypatch.setattr(workflow, "datos_mapa", lambda: {"reportes": [], "cisternas": [], "paradas": []})
+    assert "Todavía no hay nada con ubicación" in textos(pagina(ctx, "mapa"))
+    monkeypatch.delattr(workflow, "datos_mapa")                    # función del servidor ausente: aviso claro, no caída
+    t = textos(pagina(ctx, "mapa"))
+    assert "No se pudieron obtener los datos del mapa" in t and "No se pudo mostrar" not in t
+    assert r.id
+
+
+def test_bandeja_filtra_y_muestra_detalle_con_fotos_y_coordenadas(ctx):
+    r = workflow.crear_reporte("Sin agua en Capira hace 3 dias", "t", lat=8.76, lng=-79.88, fotos=[{"nombre": "x.png", "bytes": png_valido()}])
+    p = pagina(ctx, "bandeja")
+    campo(p, "Buscar").value = r.codigo_seguimiento.lower()
+    campo(p, "Buscar").on_change(None)
+    assert f"#{r.id}" in todo_el_texto(p) and "1 de" in textos(p)
+    campo(p, "Buscar").value = "texto-que-no-existe-xyz"
+    campo(p, "Buscar").on_change(None)
+    assert "0 de" in textos(p)
+    ctx.seleccion["reporte_id"] = r.id
+    p = pagina(ctx, "bandeja")
+    t = textos(p)
+    assert "Detalle del reporte" in t and "8.76000, -79.88000" in t and "Fotos (1)" in t
+    assert len(todas_las_imagenes(p)) == 1
+    boton(p, "Revisar y confirmar").on_click(None)
+    assert ctx.destinos[-1] == "revision" and ctx.seleccion["reporte_id"] == r.id
+
+
+def test_bandeja_rechazar_desde_detalle_abre_dialogo_con_motivo(ctx, monkeypatch):
+    r = workflow.crear_reporte("Sin agua en Capira hace 3 dias", "t")
+    ctx.seleccion["reporte_id"] = r.id
+    p = pagina(ctx, "bandeja")
+    capturado = {}
+    monkeypatch.setattr(ctx, "dialogo", lambda titulo, contenido, acciones=None: capturado.update(titulo=titulo, contenido=contenido, acciones=acciones))
+    boton(p, "Rechazar reporte").on_click(None)
+    assert capturado["titulo"] == "Rechazar reporte" and "Motivo" in todo_el_texto(capturado["contenido"])
+    ctx.page = PaginaFalsa()
+    capturado["acciones"][1].on_click(None)                              # sin motivo: el backend lo impide
+    assert workflow.obtener_reporte(r.id).estado == EstadoReporte.POR_REVISAR and ctx.avisos[-1][0] == "bad"
+    capturado["contenido"].value = "reporte de prueba"
+    capturado["acciones"][1].on_click(None)
+    assert workflow.obtener_reporte(r.id).estado == EstadoReporte.RECHAZADO
+
+
+def confirmar_con_sector(sector="Chame"):
+    r = workflow.crear_reporte(f"Sin agua en {sector} hace 30 horas, unas 40 personas", "t")
+    return workflow.corregir_y_confirmar(r.id, "t", sector, 30, 40, "alta", None)
+
+
+def test_recomendaciones_analizar_y_aprobar_crea_mision(ctx):
+    r = confirmar_con_sector("Chame")
+    ctx.seleccion["reporte_id"] = r.id
+    p = pagina(ctx, "recomendaciones")
+    assert "No se pudo mostrar" not in textos(p) and "PROPUESTA" in textos(p)
+    boton(p, "Analizar reporte").on_click(None)
+    recs = workflow_ia.listar_recomendaciones()
+    assert len(recs) == 1 and recs[0].estado.value == "propuesta" and ctx.destinos[-1] == "recomendaciones"
+    p = pagina(ctx, "recomendaciones")
+    t = textos(p)
+    assert f"Recomendación #{recs[0].id}" in t and "Etapas del análisis" in t and "reglas locales (sin IA)" in todo_el_texto(p)
+    if not recs[0].cisterna_sugerida:
+        pytest.skip("el análisis local no propuso cisterna en esta base")
+    boton(p, "Aprobar").on_click(None)                               # sin Page, ctx.confirmar ejecuta directo
+    rec = workflow_ia.obtener_recomendacion(recs[0].id)
+    assert rec.estado.value == "aprobada" and rec.mision_id and rec.decidida_por == "admin1"
+    assert workflow.obtener_mision(rec.mision_id).creada_por == "admin1"
+    p = pagina(ctx, "recomendaciones")
+    campo_est = campo(p, "Mostrar")
+    campo_est.value = "todas"
+    campo_est.on_select(None)
+    assert f"Misión #{rec.mision_id} creada" in textos(p)
+
+
+def test_recomendaciones_rechazar_exige_motivo_y_modificar_cambia_litros(ctx):
+    r = confirmar_con_sector("Capira")
+    workflow_ia.analizar_reporte(r.id, "t")
+    rec = workflow_ia.listar_recomendaciones()[0]
+    p = pagina(ctx, "recomendaciones")
+    boton(p, "Rechazar").on_click(None)                               # sin motivo: no cambia nada y el campo avisa
+    assert workflow_ia.obtener_recomendacion(rec.id).estado.value == "propuesta"
+    assert campo(p, "Motivo (obligatorio").error_text
+    if rec.paradas_sugeridas:
+        boton(p, "Modificar").on_click(None)                          # primer clic: muestra el editor
+        boton(p, "Modificar").on_click(None)                          # segundo clic sin motivo: no guarda
+        assert workflow_ia.obtener_recomendacion(rec.id).estado.value == "propuesta"
+        campo(p, "Motivo (obligatorio").value = "ajusto la carga"
+        campo(p, "Litros · parada 1").value = "50"
+        boton(p, "Modificar").on_click(None)
+        rec2 = workflow_ia.obtener_recomendacion(rec.id)
+        assert rec2.estado.value == "modificada" and rec2.paradas_sugeridas[0].litros == 50 and rec2.mision_id
+    else:
+        campo(p, "Motivo (obligatorio").value = "no procede"
+        boton(p, "Rechazar").on_click(None)
+        assert workflow_ia.obtener_recomendacion(rec.id).estado.value == "rechazada"
+
+
+def test_recomendaciones_distingue_procedencia_por_etapa():
+    from interface.flet_app.admin.recomendaciones import pill_procedencia
+    assert "Gemini" in todo_el_texto(pill_procedencia("gemini"))
+    assert "respaldo" in todo_el_texto(pill_procedencia("reglas(fallback)")) and "Gemini" not in todo_el_texto(pill_procedencia("reglas(fallback)"))
+    assert "sin IA" in todo_el_texto(pill_procedencia("reglas"))
+
+
+def test_misiones_registrar_terminal_muestra_el_token_una_sola_vez(ctx, monkeypatch):
+    p = pagina(ctx, "misiones")
+    assert "No se pudo mostrar" not in textos(p)
+    cap = {}
+    monkeypatch.setattr(ctx, "dialogo", lambda titulo, contenido, acciones=None: cap.update(titulo=titulo, contenido=contenido))
+    monkeypatch.setattr(ctx, "confirmar", lambda t, m, on_si, peligro=False: on_si())
+    cisterna = workflow.listar_cisternas()[0].id
+    boton(p, "Registrar terminal").on_click(None)                    # primera cisterna sin terminal
+    assert "Terminal registrada" in cap["titulo"]
+
+    def token_en(contenido):
+        return [str(c.value) for c in recorrer(contenido) if isinstance(c, ft.Text) and c.font_family == "monospace"]
+    token = token_en(cap["contenido"])
+    assert token and "NO se volverá a mostrar" in todo_el_texto(cap["contenido"])
+    assert workflow.autenticar_dispositivo(token[0]) is not None       # el token mostrado es el real
+    p = pagina(ctx, "misiones")
+    assert token[0] not in todo_el_texto(p)                          # nunca vuelve a aparecer
+    assert any(d.cisterna_id == cisterna and d.activo for d in workflow.listar_dispositivos())
+    cap.clear()
+    buscar(p, ft.IconButton, lambda c: c.tooltip == "Rotar token").on_click(None)
+    nuevo = token_en(cap["contenido"])
+    assert nuevo and nuevo[0] != token[0] and workflow.autenticar_dispositivo(token[0]) is None
+    buscar(pagina(ctx, "misiones"), ft.IconButton, lambda c: c.tooltip == "Desactivar terminal").on_click(None)
+    assert not next(d for d in workflow.listar_dispositivos() if d.cisterna_id == cisterna).activo
+
+
+def test_misiones_crear_manual_ver_avance_eventos_y_cancelar(ctx, monkeypatch):
+    monkeypatch.setattr(ctx, "confirmar", lambda t, m, on_si, peligro=False: on_si())
+    cis = next(c for c in workflow.listar_cisternas() if c.estado.value == "disponible")
+    p = pagina(ctx, "misiones")
+    campo(p, "Sector de la parada").value = "Chame"
+    campo(p, "Litros").value = "2000"
+    boton(p, "Agregar parada").on_click(None)
+    campo(p, "Cisterna").value = cis.id
+    campo(p, "Motivo o comentario").value = "prueba manual"
+    boton(p, "Crear misión manual").on_click(None)
+    ms = workflow.listar_misiones()
+    assert len(ms) == 1 and ms[0].cisterna_id == cis.id and ms[0].creada_por == "admin1" and ms[0].paradas[0].litros == 2000
+    workflow.registrar_dispositivo(cis.id, "T1")
+    workflow.dispositivo_recibir_eventos(cis.id, [{"uid": "evento-0001", "tipo": "llegada", "mision_id": ms[0].id, "parada_orden": 1}])
+    p = pagina(ctx, "misiones")
+    t = textos(p)
+    assert f"Misión #{ms[0].id}" in t and "llegó" in t and "Avance: 0 de 1" in t
+    boton(p, "Actualizar").on_click(None)                            # el botón relee del servidor sin romper
+    boton(p, "Cancelar misión").on_click(None)                       # sin motivo
+    assert workflow.obtener_mision(ms[0].id).estado.value == "en_curso"
+    campo(p, "Motivo para cancelar").value = "ya no hace falta"
+    boton(p, "Cancelar misión").on_click(None)
+    assert workflow.obtener_mision(ms[0].id).estado.value == "cancelada"
+
+
+def test_misiones_desde_plan_aprobado(ctx):
+    confirmar_todo()
+    plan = workflow.generar_plan("t")
+    plan = workflow.decidir_plan(plan.id, AccionDecision.APROBAR, "t")
+    cis = plan.asignaciones[0].cisterna_id
+    p = pagina(ctx, "misiones")
+    campo(p, "Cisterna").value = cis
+    boton(p, "Crear misión desde el plan").on_click(None)
+    ms = workflow.listar_misiones()
+    assert len(ms) == 1 and ms[0].plan_id == plan.id and ms[0].cisterna_id == cis
+
+
+def test_manejadores_de_eventos_usan_la_sesion_aunque_no_haya_actor_ambiente(ctx):
+    """Flet ejecuta los manejadores fuera de la construcción de la página (hilos sin actor): las lecturas del detalle de la bandeja
+    y de «Actualizar» en misiones deben apoyarse en la sesión del Ctx, no en el actor ambiente que la fixture deja puesto."""
+    r = workflow.crear_reporte("Sin agua en Capira hace 3 dias", "t", lat=8.76, lng=-79.88, fotos=[{"nombre": "x.png", "bytes": png_valido()}])
+    p = pagina(ctx, "bandeja")
+    abrir = buscar(p, ft.TextButton, lambda c: c.content == f"#{r.id}")
+    with auth.como(None):
+        abrir.on_click(None)
+    assert "Detalle del reporte" in textos(p) and "No se pudo leer una foto" not in todo_el_texto(p) and len(todas_las_imagenes(p)) == 1
+    m = pagina(ctx, "misiones")
+    with auth.como(None):
+        boton(m, "Actualizar").on_click(None)
+    assert "Parte de los datos no está disponible" not in todo_el_texto(m)

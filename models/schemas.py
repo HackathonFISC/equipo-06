@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 
 from pydantic import BaseModel, Field, model_validator
 
-SCHEMA_VERSION = "1.2"  # 1.2: Reporte.codigo_seguimiento (portal público)
+SCHEMA_VERSION = "1.3"  # 1.3: coordenadas/fotos en Reporte, misiones, dispositivos por vehículo, recomendaciones IA
 
 
 class Severidad(str, Enum):
@@ -141,6 +141,10 @@ class Reporte(BaseModel):
     clave_idempotencia: Optional[str] = None
     motivo_rechazo: Optional[str] = None
     codigo_seguimiento: Optional[str] = None  # HID-XXXXXXXX; reportes antiguos no lo tienen
+    lat: Optional[float] = Field(None, ge=-90, le=90)     # coordenadas elegidas en el mapa (None = no indicadas)
+    lng: Optional[float] = Field(None, ge=-180, le=180)
+    ubicacion_fuente: Optional[str] = None                # "mapa" | "sector" (centro del sector, aproximada)
+    foto_ids: List[str] = Field(default_factory=list)     # ids de Foto (ver services/fotos)
 
 
 class CandidatoDuplicado(BaseModel):
@@ -253,3 +257,122 @@ class ConfirmacionDispositivo(BaseModel):
     cisterna_id: Optional[str] = None
     tipo: str = Field(description="p. ej. 'plan_recibido', 'cisterna_en_ruta', 'entrega_realizada'")
     detalle: Dict[str, Any] = Field(default_factory=dict)
+
+
+# --------------------------------------------------------------------------
+# Fotografías, dispositivos (un vehículo = una Cisterna = una terminal ESP32-S3) y misiones
+# --------------------------------------------------------------------------
+class Foto(BaseModel):
+    """Metadatos; el archivo vive en config.MEDIA_DIR/<id>.<ext> (fuera del código y de Git)."""
+    id: str                                  # aleatorio, sin relación con el nombre original
+    reporte_id: Optional[int] = None
+    tipo_mime: str                           # image/jpeg | image/png | image/webp (validado por firma, no por extensión)
+    bytes: int
+    sha256: str
+    fecha: datetime = Field(default_factory=datetime.now)
+
+
+class EstadoParada(str, Enum):
+    PENDIENTE = "pendiente"
+    LLEGADA = "llegada"
+    ENTREGADA = "entregada"
+    INCIDENCIA = "incidencia"
+
+
+class EstadoMision(str, Enum):
+    ASIGNADA = "asignada"
+    EN_CURSO = "en_curso"
+    COMPLETADA = "completada"
+    CANCELADA = "cancelada"
+
+
+class Parada(BaseModel):
+    orden: int = Field(ge=1)
+    sector: str
+    litros: int = Field(gt=0)
+    lat: Optional[float] = None
+    lng: Optional[float] = None
+    reporte_ids: List[int] = Field(default_factory=list)
+    instruccion: str = ""
+    estado: EstadoParada = EstadoParada.PENDIENTE
+    litros_entregados: Optional[int] = None
+    nota: str = ""
+
+
+class Mision(BaseModel):
+    id: int
+    cisterna_id: str
+    estado: EstadoMision = EstadoMision.ASIGNADA
+    paradas: List[Parada]
+    plan_id: Optional[int] = None
+    recomendacion_id: Optional[int] = None   # si nació de una recomendación IA aprobada por una persona
+    creada: datetime = Field(default_factory=datetime.now)
+    creada_por: str                          # persona (o servicio) que la aprobó/asignó
+    motivo: str = ""
+    ficticio: bool = False
+
+
+class Dispositivo(BaseModel):
+    """Identidad de una terminal. Una por cisterna. El token solo se muestra al registrarla; se guarda su hash."""
+    cisterna_id: str
+    nombre: str = ""
+    token_hash: str = Field(default="", exclude=True)   # nunca se serializa hacia la API
+    activo: bool = True
+    creado: datetime = Field(default_factory=datetime.now)
+    ultima_conexion: Optional[datetime] = None
+    ultimo_estado: Dict[str, Any] = Field(default_factory=dict)  # wifi, firmware, eventos pendientes...
+
+
+class EventoMision(BaseModel):
+    """Evento enviado por la terminal. `uid` lo genera el dispositivo: reenviarlo no duplica nada (idempotente)."""
+    uid: str = Field(min_length=8, max_length=64)
+    tipo: str = Field(pattern="^(llegada|entrega|incidencia)$")
+    mision_id: int
+    parada_orden: int = Field(ge=1)
+    litros_entregados: Optional[int] = Field(None, ge=0)
+    nota: str = Field("", max_length=300)
+    fecha_dispositivo: Optional[datetime] = None   # el reloj del ESP32 puede ser inexacto: solo informativo
+
+
+class RegistroEvento(EventoMision):
+    id: int = 0
+    cisterna_id: str
+    fecha_servidor: datetime = Field(default_factory=datetime.now)
+    resultado: str = "aplicado"                    # aplicado | duplicado | rechazado
+
+
+# --------------------------------------------------------------------------
+# Orquestación IA (la persona decide; la IA solo propone)
+# --------------------------------------------------------------------------
+class EtapaIA(BaseModel):
+    nombre: str      # validacion | duplicados | clasificacion | prioridad | recomendacion | asignacion
+    estado: str      # ok | omitida | error | fallback
+    proveedor: str   # reglas | gemini | reglas(fallback)
+    duracion_ms: int = 0
+    resumen: str = ""
+    detalle: Dict[str, Any] = Field(default_factory=dict)
+
+
+class EstadoRecomendacion(str, Enum):
+    PROPUESTA = "propuesta"
+    APROBADA = "aprobada"
+    MODIFICADA = "modificada"
+    RECHAZADA = "rechazada"
+
+
+class Recomendacion(BaseModel):
+    id: int = 0
+    reporte_id: int
+    fecha: datetime = Field(default_factory=datetime.now)
+    estado: EstadoRecomendacion = EstadoRecomendacion.PROPUESTA
+    proveedor: str                              # procedencia real: gemini | reglas | reglas(fallback)
+    etapas: List[EtapaIA]
+    prioridad_sugerida: Optional[float] = None
+    categoria: Optional[str] = None
+    accion_sugerida: str = ""
+    posibles_duplicados: List[int] = Field(default_factory=list)
+    cisterna_sugerida: Optional[str] = None
+    paradas_sugeridas: List[Parada] = Field(default_factory=list)
+    decidida_por: Optional[str] = None
+    motivo_decision: str = ""
+    mision_id: Optional[int] = None             # solo existe tras aprobación humana

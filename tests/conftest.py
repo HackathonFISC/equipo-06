@@ -14,8 +14,11 @@ def bd_temporal(tmp_path, monkeypatch):
     import config
     monkeypatch.setattr(config, "DB_PATH", tmp_path / "test.db")
     monkeypatch.setattr(config, "TRACE_PATH", tmp_path / "trazas.jsonl")
+    monkeypatch.setattr(config, "MEDIA_DIR", tmp_path / "media")  # las pruebas nunca escriben en ./media real
     monkeypatch.setenv("AI_PROVIDER", "local")
     monkeypatch.delenv("GEMINI_API_KEY", raising=False)
+    for _v in ("HIDRO360_API_TOKEN", "HIDRO360_DEVICE_TOKEN"):
+        monkeypatch.delenv(_v, raising=False)
     monkeypatch.delenv("AGUA_CLARA_API_TOKEN", raising=False)
     monkeypatch.delenv("AGUA_CLARA_DEVICE_TOKEN", raising=False)
     from api import main as api_main

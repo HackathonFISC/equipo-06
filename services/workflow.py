@@ -11,21 +11,23 @@ forman parte de la transacción.
 
 import functools
 import hashlib
+import hmac
 import re
 import secrets
 import time
-from datetime import datetime, timedelta
-from typing import Any, Dict, List, Optional
+from datetime import datetime, timedelta, timezone
+from typing import Any, Dict, List, Optional, Tuple
 
 import config
 from data import database as db
 from data.datos_ficticios import CISTERNAS_FICTICIAS, REPORTES_FICTICIOS, SECTORES_FICTICIOS
 from models.schemas import (AccionDecision, Asignacion, CandidatoDuplicado, Cisterna,
-                            ConfirmacionDispositivo, Decision, EstadoActual, EstadoPlan,
-                            EstadoReporte, PrioridadSector, PropuestaPlan, Reporte, Sector,
+                            ConfirmacionDispositivo, Decision, Dispositivo, EstadoActual, EstadoCisterna,
+                            EstadoMision, EstadoParada, EstadoPlan, EstadoReporte, EventoMision, Mision,
+                            Parada, PrioridadSector, PropuestaPlan, RegistroEvento, Reporte, Sector,
                             SectorPendiente, Severidad)
-from services import (audit, auth, communication, geoloc, ia_tareas, ingest, planner, prioritization,
-                      tracing)
+from services import (audit, auth, communication, fotos as fotos_srv, geoloc, ia_tareas, ingest, planner,
+                      prioritization, tracing)
 from services.auth import requiere_admin
 from services.textutil import normalizar
 
@@ -54,6 +56,45 @@ TRANSICIONES_PLAN = {
     EstadoPlan.APROBADO: set(),
     EstadoPlan.RECHAZADO: set(),
 }
+
+
+TRANSICIONES_MISION = {
+    EstadoMision.ASIGNADA: {EstadoMision.EN_CURSO, EstadoMision.CANCELADA},
+    EstadoMision.EN_CURSO: {EstadoMision.COMPLETADA, EstadoMision.CANCELADA},
+    EstadoMision.COMPLETADA: set(),
+    EstadoMision.CANCELADA: set(),
+}
+# Una parada puede registrarse como «entregada» sin «llegada» previa (la terminal pudo perder ese evento).
+TRANSICIONES_PARADA = {
+    EstadoParada.PENDIENTE: {EstadoParada.LLEGADA, EstadoParada.ENTREGADA, EstadoParada.INCIDENCIA},
+    EstadoParada.LLEGADA: {EstadoParada.ENTREGADA, EstadoParada.INCIDENCIA},
+    EstadoParada.ENTREGADA: set(),
+    EstadoParada.INCIDENCIA: set(),
+}
+_ACTIVAS = (EstadoMision.ASIGNADA, EstadoMision.EN_CURSO)
+_PARADA_TERMINAL = (EstadoParada.ENTREGADA, EstadoParada.INCIDENCIA)
+_TIPO_A_PARADA = {"llegada": EstadoParada.LLEGADA, "entrega": EstadoParada.ENTREGADA,
+                  "incidencia": EstadoParada.INCIDENCIA}
+
+# Rectángulo razonable de Panamá Oeste (lat_min, lat_max, lng_min, lng_max); sobrescribible con config.COORD_LIMITES.
+_COORD_LIMITES_DEFECTO = (8.3, 9.3, -80.3, -79.2)
+
+
+def _limites_coord() -> Tuple[float, float, float, float]:
+    return tuple(getattr(config, "COORD_LIMITES", _COORD_LIMITES_DEFECTO))
+
+
+def _validar_coord(lat: Optional[float], lng: Optional[float], cual: str = "El reporte") -> None:
+    if lat is None and lng is None:
+        return
+    if lat is None or lng is None:
+        raise ErrorDeNegocio(f"{cual}: indique latitud y longitud juntas.")
+    la0, la1, ln0, ln1 = _limites_coord()
+    if not (isinstance(lat, (int, float)) and isinstance(lng, (int, float))) or lat != lat or lng != lng:
+        raise ErrorDeNegocio(f"{cual}: coordenadas inválidas.")
+    if not (la0 <= lat <= la1 and ln0 <= lng <= ln1):
+        raise ErrorDeNegocio(f"{cual}: las coordenadas están fuera de Panamá Oeste "
+                             f"(latitud {la0} a {la1}, longitud {ln0} a {ln1}).")
 
 
 def _mover_reporte(r: Reporte, nuevo: EstadoReporte) -> None:
@@ -199,16 +240,21 @@ def _nuevo_codigo(usados: set) -> str:
 @operacion("crear_reporte")
 def crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
                   canal: str = "manual", clave_idempotencia: Optional[str] = None,
-                  origen: Optional[str] = None) -> Reporte:
+                  origen: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None,
+                  fotos: Optional[List[Dict[str, Any]]] = None) -> Reporte:
     """Ingesta. Es la única operación de escritura abierta al ciudadano anónimo (portal público): no exige rol.
-    `origen` (p. ej. la IP del portal) activa el límite de tasa. Sin actor el responsable queda como «ciudadano»."""
+    `origen` (p. ej. la IP del portal) activa el límite de tasa. Sin actor el responsable queda como «ciudadano».
+    Opcionales: `lat`/`lng` (ubicación elegida en el mapa, dentro de Panamá Oeste) y `fotos`
+    ([{"nombre":.., "base64":..}], máx. config.MAX_FOTOS_POR_REPORTE; validadas por firma binaria)."""
     if origen:
         _limitar("reporte:" + origen, _LIMITE_REPORTES)
-    return _crear_reporte(texto, responsable, ficticio, auditar, canal, clave_idempotencia)
+    return _crear_reporte(texto, responsable, ficticio, auditar, canal, clave_idempotencia, lat, lng, fotos)
 
 
 def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
-                   canal: str = "manual", clave_idempotencia: Optional[str] = None) -> Reporte:
+                   canal: str = "manual", clave_idempotencia: Optional[str] = None,
+                   lat: Optional[float] = None, lng: Optional[float] = None,
+                   fotos: Optional[List[Dict[str, Any]]] = None) -> Reporte:
     """Guarda el texto original (inalterable) y los campos extraídos, sin confirmar.
     Idempotencia: la misma `clave_idempotencia`, o el mismo texto reciente dentro de
     config.IDEMPOTENCIA_SEGUNDOS, devuelve el reporte ya creado en vez de duplicarlo."""
@@ -217,6 +263,11 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
         raise ErrorDeNegocio("El texto del reporte no puede estar vacío.")
     if len(texto) > 4000:
         raise ErrorDeNegocio("El texto del reporte excede 4000 caracteres.")
+    _validar_coord(lat, lng)
+    try:
+        validadas = fotos_srv.validar(fotos)
+    except fotos_srv.ErrorFoto as e:
+        raise ErrorDeNegocio(str(e))
     existentes = _listar_reportes()
     if clave_idempotencia:
         for r in existentes:
@@ -246,14 +297,28 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
         "interprete": ex.metodo, "sector_candidatos": ex.sector_candidatos,
         "clave_idempotencia": clave_idempotencia,
         "codigo_seguimiento": _nuevo_codigo({r.codigo_seguimiento for r in existentes if r.codigo_seguimiento}),
+        "lat": lat, "lng": lng, "ubicacion_fuente": "mapa" if lat is not None else None, "foto_ids": [],
     }
-    rid = db.insertar("reportes", datos)
-    tracing.correlacionar(f"reporte:{rid}")
-    rep = _obtener_reporte(rid)
-    if auditar:
-        quien = "ciudadano" if auth.actor() is None else _resolver_responsable(responsable)
-        audit.registrar(quien, "crear_reporte", "reporte", rid,
-                        detalle={"extraccion": ex.model_dump(mode="json"), "canal": canal})
+    escritas: List[Tuple[str, str]] = []
+    try:
+        rid = db.insertar("reportes", datos)
+        tracing.correlacionar(f"reporte:{rid}")
+        for contenido, mime in validadas:
+            f = fotos_srv.guardar(contenido, mime, rid)
+            escritas.append((f.id, f.tipo_mime))
+            datos["foto_ids"].append(f.id)
+        if escritas:
+            db.actualizar("reportes", rid, {**datos, "id": rid})
+        rep = _obtener_reporte(rid)
+        if auditar:
+            quien = "ciudadano" if auth.actor() is None else _resolver_responsable(responsable)
+            audit.registrar(quien, "crear_reporte", "reporte", rid,
+                            detalle={"extraccion": ex.model_dump(mode="json"), "canal": canal,
+                                     "con_ubicacion": lat is not None, "n_fotos": len(escritas)})
+    except BaseException:
+        for fid, mime in escritas:      # la transacción se revierte: no dejar archivos huérfanos
+            fotos_srv.borrar_archivo(fid, mime)
+        raise
     return rep
 
 
@@ -666,7 +731,8 @@ def consultar_reporte_publico(codigo: str, origen: Optional[str] = None) -> Dict
     confirmado = r.estado in (EstadoReporte.CONFIRMADO, EstadoReporte.EN_PLAN)
     return {"codigo": c, "estado_publico": _ESTADO_PUBLICO[r.estado],
             "sector": r.sector if confirmado else None,
-            "fecha_creacion": r.fecha_creacion.isoformat(timespec="minutes")}
+            "fecha_creacion": r.fecha_creacion.isoformat(timespec="minutes"),
+            "tiene_ubicacion": r.lat is not None and r.lng is not None, "n_fotos": len(r.foto_ids)}
 
 
 def avisos_publicos() -> List[Dict[str, Any]]:
@@ -687,3 +753,425 @@ def avisos_publicos() -> List[Dict[str, Any]]:
         avisos.append({"tipo": "en_evaluacion", "sector": s, "reportes_en_evaluacion": n,
                        "mensaje": f"{s}: {n} reporte(s) confirmado(s) en evaluación."})
     return avisos
+
+
+# ================================================================== fotos (solo administración)
+@requiere_admin
+def obtener_foto(reporte_id: int, foto_id: str) -> Tuple[bytes, str]:
+    """(bytes, tipo_mime) de una foto de un reporte. El portal público nunca llega aquí. La foto debe pertenecer
+    al reporte indicado (no basta con conocer un id de foto)."""
+    r = _obtener_reporte(reporte_id)
+    if foto_id not in r.foto_ids:
+        raise ErrorDeNegocio("La foto no existe.")
+    res = fotos_srv.leer(foto_id)
+    if res is None:
+        raise ErrorDeNegocio("La foto no existe o su archivo no está disponible.")
+    return res
+
+
+def _quien(responsable: Optional[str] = None) -> str:
+    """Responsable de auditoría para operaciones donde el nombre declarado es opcional."""
+    a = auth.exigir_admin()
+    if a.origen == "servicio":
+        return f"servicio:{(responsable or '').strip() or a.usuario}"
+    return a.usuario
+
+
+# ============================================================ dispositivos (un vehículo = una terminal)
+def _hash_token(token: str) -> str:
+    return hashlib.sha256((token or "").encode("utf-8")).hexdigest()
+
+
+def _doc_dispositivo(cisterna_id: str) -> Optional[Dispositivo]:
+    d = db.obtener("dispositivos", cisterna_id)
+    return Dispositivo(**d) if d else None
+
+
+def _guardar_dispositivo(d: Dispositivo) -> None:
+    # token_hash está excluido de la serialización pública; aquí se persiste explícitamente.
+    db.insertar("dispositivos", {**d.model_dump(mode="json"), "token_hash": d.token_hash}, clave=d.cisterna_id)
+
+
+def _sin_hash(d: Dispositivo) -> Dispositivo:
+    return d.model_copy(update={"token_hash": ""})
+
+
+def _token_nuevo() -> str:
+    return secrets.token_urlsafe(32)        # 256 bits
+
+
+@requiere_admin
+@operacion("registrar_dispositivo")
+def registrar_dispositivo(cisterna_id: str, nombre: str = "", responsable: str = "") -> Tuple[Dispositivo, str]:
+    """Registra la terminal de un vehículo y devuelve (Dispositivo, token en claro). El token se muestra UNA vez:
+    solo se guarda su SHA-256."""
+    quien = _quien(responsable)
+    if db.obtener("cisternas", cisterna_id) is None:
+        raise ErrorDeNegocio(f"La cisterna {cisterna_id} no existe.")
+    if _doc_dispositivo(cisterna_id) is not None:
+        raise ErrorDeNegocio(f"La cisterna {cisterna_id} ya está registrada como dispositivo: rote su token.")
+    token = _token_nuevo()
+    d = Dispositivo(cisterna_id=cisterna_id, nombre=(nombre or "").strip()[:80], token_hash=_hash_token(token))
+    _guardar_dispositivo(d)
+    audit.registrar(quien, "registrar_dispositivo", "dispositivo", cisterna_id, detalle={"nombre": d.nombre})
+    return _sin_hash(d), token
+
+
+@requiere_admin
+@operacion("rotar_token_dispositivo")
+def rotar_token(cisterna_id: str, responsable: str = "") -> Tuple[Dispositivo, str]:
+    """Genera un token nuevo e invalida el anterior al instante. También reactiva un dispositivo desactivado."""
+    quien = _quien(responsable)
+    d = _doc_dispositivo(cisterna_id)
+    if d is None:
+        raise ErrorDeNegocio(f"El dispositivo de la cisterna {cisterna_id} no existe.")
+    token = _token_nuevo()
+    d.token_hash = _hash_token(token)
+    d.activo = True
+    _guardar_dispositivo(d)
+    audit.registrar(quien, "rotar_token_dispositivo", "dispositivo", cisterna_id)
+    return _sin_hash(d), token
+
+
+@requiere_admin
+@operacion("desactivar_dispositivo")
+def desactivar_dispositivo(cisterna_id: str, responsable: str = "") -> Dispositivo:
+    quien = _quien(responsable)
+    d = _doc_dispositivo(cisterna_id)
+    if d is None:
+        raise ErrorDeNegocio(f"El dispositivo de la cisterna {cisterna_id} no existe.")
+    d.activo = False
+    _guardar_dispositivo(d)
+    audit.registrar(quien, "desactivar_dispositivo", "dispositivo", cisterna_id)
+    return _sin_hash(d)
+
+
+@requiere_admin
+def listar_dispositivos() -> List[Dispositivo]:
+    return [_sin_hash(Dispositivo(**d)) for d in db.listar("dispositivos")]
+
+
+def autenticar_dispositivo(token: Optional[str]) -> Optional[Dispositivo]:
+    """Identifica la terminal por su token (la identidad sale del token, jamás del cuerpo de la petición).
+    Compara en tiempo constante contra todos los hashes. None si el token no es válido o el dispositivo está inactivo."""
+    if not token or len(token) > 200:
+        return None
+    h = _hash_token(token)
+    hallado = None
+    for doc in db.listar("dispositivos"):
+        if hmac.compare_digest(h, doc.get("token_hash", "")):
+            hallado = doc
+    if hallado is None:
+        return None
+    d = Dispositivo(**hallado)
+    return d if d.activo else None
+
+
+@operacion("dispositivo_latido")
+def dispositivo_latido(cisterna_id: str, firmware: str = "", wifi_rssi: Optional[int] = None,
+                       pendientes: int = 0, uptime_s: Optional[int] = None) -> Dict[str, Any]:
+    """Latido de la terminal: última conexión y estado (no se audita cada latido)."""
+    d = _doc_dispositivo(cisterna_id)
+    if d is None or not d.activo:
+        raise ErrorDeNegocio("Dispositivo no autorizado.")
+    d.ultima_conexion = datetime.now()
+    d.ultimo_estado = {"firmware": (firmware or "")[:40], "wifi_rssi": wifi_rssi,
+                       "pendientes": max(0, int(pendientes or 0)), "uptime_s": uptime_s}
+    _guardar_dispositivo(d)
+    return {"ok": True, "servidor_hora": _ahora_utc()}
+
+
+def _ahora_utc() -> str:
+    return datetime.now(timezone.utc).isoformat(timespec="seconds")
+
+
+# ================================================================================ misiones
+def _obtener_mision(mision_id: int) -> Mision:
+    d = db.obtener("misiones", mision_id)
+    if d is None:
+        raise ErrorDeNegocio(f"La misión {mision_id} no existe.")
+    return Mision(**d)
+
+
+def _guardar_mision(m: Mision) -> None:
+    db.actualizar("misiones", m.id, m.model_dump(mode="json"))
+
+
+def _mision_activa_de(cisterna_id: str) -> Optional[Mision]:
+    activas = [Mision(**d) for d in db.listar("misiones")
+               if d.get("cisterna_id") == cisterna_id and d.get("estado") in {e.value for e in _ACTIVAS}]
+    return activas[-1] if activas else None
+
+
+def _normalizar_paradas(paradas: List[Any], sectores: Dict[str, Sector]) -> List[Parada]:
+    if not paradas:
+        raise ErrorDeNegocio("La misión necesita al menos una parada.")
+    salida: List[Parada] = []
+    for i, p in enumerate(paradas, start=1):
+        try:
+            par = p if isinstance(p, Parada) else Parada(**p)
+        except Exception:
+            raise ErrorDeNegocio(f"La parada {i} es inválida (sector, litros mayores que 0 y orden).")
+        if par.sector not in sectores:
+            raise ErrorDeNegocio(f"Parada {par.orden}: el sector «{par.sector}» no está en el catálogo.")
+        _validar_coord(par.lat, par.lng, f"Parada {par.orden}")
+        sec = sectores[par.sector]
+        lat, lng = (par.lat, par.lng) if par.lat is not None else (sec.lat, sec.lng)   # nunca se inventan
+        salida.append(Parada(orden=par.orden, sector=par.sector, litros=par.litros, lat=lat, lng=lng,
+                             reporte_ids=list(par.reporte_ids), instruccion=par.instruccion[:300],
+                             estado=EstadoParada.PENDIENTE, litros_entregados=None, nota=""))
+    ordenes = [p.orden for p in salida]
+    if len(set(ordenes)) != len(ordenes):
+        raise ErrorDeNegocio("Las paradas tienen órdenes repetidos.")
+    return sorted(salida, key=lambda p: p.orden)
+
+
+def _crear_mision(cisterna_id: str, paradas: List[Any], quien: str, plan_id: Optional[int],
+                  recomendacion_id: Optional[int], motivo: str) -> Mision:
+    cd = db.obtener("cisternas", cisterna_id)
+    if cd is None:
+        raise ErrorDeNegocio(f"La cisterna {cisterna_id} no existe.")
+    cis = Cisterna(**cd)
+    if cis.estado != EstadoCisterna.DISPONIBLE:
+        raise ErrorDeNegocio(f"La cisterna {cisterna_id} no está disponible ({cis.estado.value}).")
+    activa = _mision_activa_de(cisterna_id)
+    if activa is not None:
+        raise ErrorDeNegocio(f"La cisterna {cisterna_id} ya está en la misión activa {activa.id}: cancélela primero.")
+    if plan_id is not None and db.obtener("planes", plan_id) is None:
+        raise ErrorDeNegocio(f"El plan {plan_id} no existe.")
+    if recomendacion_id is not None and db.obtener("recomendaciones", recomendacion_id) is None:
+        raise ErrorDeNegocio(f"La recomendación {recomendacion_id} no existe.")
+    sectores = {s.nombre: s for s in listar_sectores()}
+    ps = _normalizar_paradas(paradas, sectores)
+    total = sum(p.litros for p in ps)
+    if total > cis.litros_disponibles:
+        raise ErrorDeNegocio(f"Las paradas suman {total} L y la cisterna {cisterna_id} solo tiene "
+                             f"{cis.litros_disponibles} L disponibles.")
+    m = Mision(id=0, cisterna_id=cisterna_id, estado=EstadoMision.ASIGNADA, paradas=ps, plan_id=plan_id,
+               recomendacion_id=recomendacion_id, creada=datetime.now(), creada_por=quien,
+               motivo=(motivo or "").strip(), ficticio=cis.ficticio)
+    m.id = db.insertar("misiones", m.model_dump(mode="json"))
+    _guardar_mision(m)
+    tracing.correlacionar(f"mision:{m.id}")
+    audit.registrar(quien, "crear_mision", "mision", m.id, motivo=m.motivo,
+                    detalle={"cisterna_id": cisterna_id, "plan_id": plan_id, "recomendacion_id": recomendacion_id,
+                             "paradas": [p.model_dump(mode="json") for p in ps], "litros": total})
+    return m
+
+
+@requiere_admin
+@operacion("crear_mision")
+def crear_mision(cisterna_id: str, paradas: List[Any], responsable: str, plan_id: Optional[int] = None,
+                 recomendacion_id: Optional[int] = None, motivo: str = "") -> Mision:
+    """Asigna una misión a UN vehículo (la persona aprueba; la IA solo propone). Valida cisterna disponible,
+    litros > 0 y dentro de lo disponible, sectores del catálogo y una sola misión activa por cisterna."""
+    quien = _resolver_responsable(responsable)
+    return _crear_mision(cisterna_id, paradas, quien, plan_id, recomendacion_id, motivo)
+
+
+@requiere_admin
+@operacion("crear_mision_desde_plan")
+def crear_mision_desde_plan(plan_id: int, cisterna_id: str, responsable: str) -> Mision:
+    """Convierte las asignaciones de un plan APROBADO para esa cisterna en paradas (mayor prioridad primero)."""
+    quien = _resolver_responsable(responsable)
+    plan = _obtener_plan(plan_id)
+    if plan.estado != EstadoPlan.APROBADO:
+        raise ErrorDeNegocio(f"El plan {plan_id} está '{plan.estado.value}': solo se asignan planes aprobados.")
+    propias = [a for a in plan.asignaciones if a.cisterna_id == cisterna_id]
+    if not propias:
+        raise ErrorDeNegocio(f"El plan {plan_id} no asigna la cisterna {cisterna_id}.")
+    if any(d.get("plan_id") == plan_id and d.get("cisterna_id") == cisterna_id and d.get("estado") != "cancelada"
+           for d in db.listar("misiones")):
+        raise ErrorDeNegocio(f"El plan {plan_id} ya está convertido en misión para la cisterna {cisterna_id}.")
+    por_sector: Dict[str, Asignacion] = {}
+    for a in sorted(propias, key=lambda x: -x.prioridad):
+        if a.sector in por_sector:
+            por_sector[a.sector] = por_sector[a.sector].model_copy(update={"litros": por_sector[a.sector].litros + a.litros})
+        else:
+            por_sector[a.sector] = a
+    reps = _listar_reportes()
+    paradas = []
+    for orden, (sector, a) in enumerate(por_sector.items(), start=1):
+        ids = [r.id for r in reps if r.sector == sector and r.estado in (EstadoReporte.CONFIRMADO, EstadoReporte.EN_PLAN)]
+        paradas.append(Parada(orden=orden, sector=sector, litros=a.litros, reporte_ids=ids,
+                              instruccion=a.nota or f"Plan {plan_id}"))
+    return _crear_mision(cisterna_id, paradas, quien, plan_id, None, f"Desde el plan aprobado {plan_id}")
+
+
+@requiere_admin
+def listar_misiones(estado: Any = None) -> List[Mision]:
+    if estado is not None:
+        try:
+            estado = EstadoMision(getattr(estado, "value", estado))
+        except ValueError:
+            raise ErrorDeNegocio(f"Estado de misión inválido: {estado}")
+    ms = [Mision(**d) for d in db.listar("misiones")]
+    return [m for m in ms if estado is None or m.estado == estado]
+
+
+@requiere_admin
+def obtener_mision(mision_id: int) -> Mision:
+    return _obtener_mision(mision_id)
+
+
+@requiere_admin
+@operacion("cancelar_mision")
+def cancelar_mision(mision_id: int, responsable: str, motivo: str) -> Mision:
+    quien = _resolver_responsable(responsable)
+    if not (motivo or "").strip():
+        raise ErrorDeNegocio("Indique el motivo de la cancelación.")
+    m = _obtener_mision(mision_id)
+    if EstadoMision.CANCELADA not in TRANSICIONES_MISION[m.estado]:
+        raise ErrorDeNegocio(f"Transición no permitida para la misión {m.id}: '{m.estado.value}' → 'cancelada'.")
+    m.estado = EstadoMision.CANCELADA
+    _guardar_mision(m)
+    audit.registrar(quien, "cancelar_mision", "mision", m.id, motivo=motivo)
+    return m
+
+
+@requiere_admin
+def listar_eventos(mision_id: Optional[int] = None, cisterna_id: Optional[str] = None) -> List[RegistroEvento]:
+    ev = [RegistroEvento(**d) for d in db.listar("eventos_mision")]
+    return [e for e in ev if (mision_id is None or e.mision_id == mision_id)
+            and (cisterna_id is None or e.cisterna_id == cisterna_id)]
+
+
+def _siguiente_tarea(m: Mision) -> Optional[Dict[str, Any]]:
+    for p in sorted(m.paradas, key=lambda x: x.orden):
+        if p.estado in _PARADA_TERMINAL:
+            continue
+        return {"parada_orden": p.orden, "accion": "ir_a" if p.estado == EstadoParada.PENDIENTE else "entregar",
+                "sector": p.sector, "litros": p.litros, "lat": p.lat, "lng": p.lng, "instruccion": p.instruccion}
+    return None
+
+
+def dispositivo_mision_activa(cisterna_id: str) -> Dict[str, Any]:
+    """Contrato de GET /dispositivo/mision. Solo la misión de ESE vehículo (la identidad ya viene del token)."""
+    m = _mision_activa_de(cisterna_id)
+    cuerpo = None
+    if m is not None:
+        cuerpo = m.model_dump(mode="json")
+        cuerpo["siguiente_tarea"] = _siguiente_tarea(m)
+    return {"cisterna_id": cisterna_id, "servidor_hora": _ahora_utc(), "mision": cuerpo}
+
+
+MAX_EVENTOS_LOTE = 50
+
+
+def _aplicar_evento(cisterna_id: str, ev: EventoMision) -> Tuple[str, str]:
+    """Aplica un evento a la parada/misión. Devuelve (resultado, motivo). Lo llama una transacción abierta."""
+    d = db.obtener("misiones", ev.mision_id)
+    if d is None or d.get("cisterna_id") != cisterna_id:       # mismo mensaje: no se revela misiones ajenas
+        return "rechazado", "La misión no existe para este vehículo."
+    m = Mision(**d)
+    if m.estado not in _ACTIVAS:
+        return "rechazado", f"La misión no está activa ({m.estado.value})."
+    parada = next((p for p in m.paradas if p.orden == ev.parada_orden), None)
+    if parada is None:
+        return "rechazado", "La parada no existe en la misión."
+    nuevo = _TIPO_A_PARADA[ev.tipo]
+    if nuevo not in TRANSICIONES_PARADA[parada.estado]:
+        return "rechazado", f"Transición no permitida en la parada: '{parada.estado.value}' → '{nuevo.value}'."
+    litros = 0
+    cis = None
+    if ev.tipo == "entrega":
+        litros = ev.litros_entregados if ev.litros_entregados is not None else parada.litros
+        if litros <= 0:
+            return "rechazado", "Una entrega necesita litros mayores que 0 (use una incidencia si no se entregó)."
+        if litros > parada.litros:
+            return "rechazado", f"Los litros entregados superan los planificados ({parada.litros} L)."
+        cd = db.obtener("cisternas", cisterna_id)
+        if cd is None:
+            return "rechazado", "La cisterna no existe."
+        cis = Cisterna(**cd)
+    quien = f"dispositivo:{cisterna_id}"
+    antes_m = m.estado
+    parada.estado = nuevo
+    if ev.nota:
+        parada.nota = ev.nota
+    detalle: Dict[str, Any] = {"parada_orden": parada.orden, "tipo": ev.tipo, "uid": ev.uid}
+    if cis is not None:
+        descontados = min(litros, cis.litros_disponibles)           # nunca por debajo de 0
+        parada.litros_entregados = litros
+        cis.litros_disponibles -= descontados
+        db.actualizar("cisternas", cis.id, cis.model_dump(mode="json"))
+        detalle.update({"litros_entregados": litros, "litros_descontados": descontados,
+                        "litros_disponibles_despues": cis.litros_disponibles})
+    if m.estado == EstadoMision.ASIGNADA:
+        m.estado = EstadoMision.EN_CURSO
+    if all(p.estado in _PARADA_TERMINAL for p in m.paradas):
+        m.estado = EstadoMision.COMPLETADA
+    _guardar_mision(m)
+    detalle["mision_estado"] = {"antes": antes_m.value, "despues": m.estado.value}
+    audit.registrar(quien, f"evento_{ev.tipo}", "mision", m.id, motivo=ev.nota, detalle=detalle)
+    return "aplicado", ""
+
+
+@operacion("dispositivo_eventos")
+def dispositivo_recibir_eventos(cisterna_id: str, eventos: List[Any]) -> List[Dict[str, str]]:
+    """Procesa un lote de eventos de la terminal en UNA transacción. Idempotente por `uid`: un evento ya aplicado
+    responde «duplicado» sin tocar nada (ni volver a descontar litros). Los eventos inválidos se rechazan uno a uno."""
+    if len(eventos) > MAX_EVENTOS_LOTE:
+        raise ErrorDeNegocio(f"Máximo {MAX_EVENTOS_LOTE} eventos por envío.")
+    d = _doc_dispositivo(cisterna_id)
+    if d is None or not d.activo:
+        raise ErrorDeNegocio("Dispositivo no autorizado.")
+    aplicados = {e["uid"]: e for e in db.listar("eventos_mision") if e.get("resultado") == "aplicado"}
+    resultados: List[Dict[str, str]] = []
+    vistos: set = set()
+    for bruto in eventos:
+        try:
+            ev = bruto if isinstance(bruto, EventoMision) else EventoMision(**bruto)
+        except Exception:
+            uid = bruto.get("uid") if isinstance(bruto, dict) and isinstance(bruto.get("uid"), str) else ""
+            resultados.append({"uid": uid[:64], "resultado": "rechazado", "motivo": "Evento con formato inválido."})
+            continue
+        previo = aplicados.get(ev.uid)
+        if previo is not None or ev.uid in vistos:
+            if previo is not None and previo.get("cisterna_id") != cisterna_id:
+                resultados.append({"uid": ev.uid, "resultado": "rechazado", "motivo": "Identificador de evento en uso."})
+            else:
+                resultados.append({"uid": ev.uid, "resultado": "duplicado", "motivo": "Ya aplicado."})
+            continue
+        resultado, motivo = _aplicar_evento(cisterna_id, ev)
+        datos = ev.model_dump(mode="json")
+        if resultado == "rechazado":
+            datos["nota"] = f"RECHAZADO: {motivo}"[:300]       # el contrato no tiene campo «motivo»
+        else:
+            vistos.add(ev.uid)
+        reg = RegistroEvento(**{**ev.model_dump(), "nota": datos["nota"]}, cisterna_id=cisterna_id,
+                             fecha_servidor=datetime.now(), resultado=resultado)
+        db.insertar("eventos_mision", reg.model_dump(mode="json"))
+        resultados.append({"uid": ev.uid, "resultado": resultado, "motivo": motivo})
+    return resultados
+
+
+# ==================================================================================== mapa
+@requiere_admin
+def datos_mapa() -> Dict[str, Any]:
+    """Datos reales de la BD para el mapa (no se inventan coordenadas)."""
+    reportes = [{"id": r.id, "lat": r.lat, "lng": r.lng, "estado": r.estado.value, "sector": r.sector,
+                 "severidad": r.severidad.value if r.severidad else None, "ficticio": r.ficticio}
+                for r in _listar_reportes() if r.lat is not None and r.lng is not None]
+    sectores = {s.nombre: s for s in listar_sectores()}
+    misiones = [Mision(**d) for d in db.listar("misiones")]
+    ultima: Dict[str, Tuple[float, float]] = {}
+    for m in misiones:      # última parada alcanzada (llegada/entrega/incidencia) = última ubicación conocida
+        for p in sorted(m.paradas, key=lambda x: x.orden):
+            if p.estado != EstadoParada.PENDIENTE and p.lat is not None:
+                ultima[m.cisterna_id] = (p.lat, p.lng)
+    cisternas = []
+    for c in listar_cisternas():
+        lat = lng = None
+        fuente = None
+        if c.id in ultima:
+            (lat, lng), fuente = ultima[c.id], "ultima_parada"
+        elif c.sector_base and sectores.get(c.sector_base) and sectores[c.sector_base].lat is not None:
+            lat, lng, fuente = sectores[c.sector_base].lat, sectores[c.sector_base].lng, "base_sector"
+        cisternas.append({"id": c.id, "estado": c.estado.value, "litros_disponibles": c.litros_disponibles,
+                          "capacidad_litros": c.capacidad_litros, "lat": lat, "lng": lng, "fuente_ubicacion": fuente,
+                          "ficticio": c.ficticio})
+    paradas = [{"mision_id": m.id, "cisterna_id": m.cisterna_id, "orden": p.orden, "sector": p.sector,
+                "lat": p.lat, "lng": p.lng, "litros": p.litros, "estado": p.estado.value}
+               for m in misiones if m.estado in _ACTIVAS for p in m.paradas if p.lat is not None]
+    return {"generado": _ahora_utc(), "reportes": reportes, "cisternas": cisternas, "paradas": paradas}
