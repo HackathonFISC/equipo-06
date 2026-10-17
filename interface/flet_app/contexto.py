@@ -106,10 +106,20 @@ class Ctx:
         self.destino_tras_login = self.pagina_actual if self.pagina_actual not in ("login", "inicio") else "panel"
         self.ir("login")
 
-    def ejecutar(self, fn: Callable[[], Any], ok_msg: Optional[str] = None, publico: bool = False) -> Tuple[bool, Any]:
+    def ejecutar(self, fn: Callable[[], Any], ok_msg: Optional[str] = None, publico: bool = False,
+                 bloquear: Optional[ft.Control] = None) -> Tuple[bool, Any]:
         """Ejecuta una operación de negocio. Devuelve (ok, valor).
+        bloquear: botón que se deshabilita mientras dura la operación (evita dobles envíos) y se rehabilita al terminar.
         publico=True: operación del portal ciudadano (sin actor). Si no, se ejecuta como el administrador de la sesión;
         sin sesión válida se rechaza y se vuelve al login. Errores esperados → aviso rojo claro."""
+        if bloquear is not None:
+            bloquear.disabled = True
+            self.actualizar()
+            try:
+                return self.ejecutar(fn, ok_msg, publico)
+            finally:
+                bloquear.disabled = False
+                self.actualizar()
         actor = None if publico else self.actor
         if not publico and actor is None:
             self._sesion_expirada("Su sesión terminó. Inicie sesión de nuevo.")
@@ -188,6 +198,25 @@ class Ctx:
         self.dialogo(titulo, ft.Text(mensaje, size=14, color=T.INK), [
             ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog()),
             ft.Button("Confirmar", on_click=si, style=ft.ButtonStyle(bgcolor=T.RED if peligro else T.BLUE, color=T.WHITE))])
+
+    def pedir_motivo(self, titulo: str, etiqueta: str, on_ok: Callable[[str], bool], accion: str = "Confirmar") -> None:
+        """Diálogo con un motivo obligatorio (rechazos, cancelaciones). Valida en el cliente que no esté vacío; `on_ok(motivo)`
+        ejecuta la operación y devuelve True si salió bien (entonces se cierra el diálogo). Si el backend rechaza, el diálogo sigue abierto."""
+        motivo = ft.TextField(label=etiqueta, autofocus=True, multiline=True, min_lines=2, max_lines=4, border_radius=10,
+                              border_color="#cfdcec", focused_border_color=T.BLUE)
+
+        def hecho(e):
+            if not (motivo.value or "").strip():
+                motivo.error_text = "Escriba el motivo: queda registrado en la auditoría."
+                self.actualizar()
+                return
+            motivo.error_text = None
+            if on_ok(motivo.value.strip()) and self.page:
+                self.page.pop_dialog()
+
+        self.dialogo(titulo, ft.Container(motivo, width=420), [
+            ft.TextButton("Cancelar", on_click=lambda e: self.page.pop_dialog() if self.page else None),
+            ft.Button(accion, on_click=hecho, style=ft.ButtonStyle(bgcolor=T.RED, color=T.WHITE))])
 
     @property
     def proveedor_ia(self) -> str:

@@ -264,9 +264,10 @@ def build(ctx) -> ft.Control:
                      ft.Text("Token de terminales general:", size=13), C.pill("configurado" if config.DEVICE_TOKEN() else "sin configurar", "ok" if config.DEVICE_TOKEN() else "warn")],
                     spacing=10, wrap=True)
     tecnico = ft.ExpansionTile(title=ft.Text("Contrato con la API para terminales", size=13), controls=[ft.Container(ft.Column([tokens, C.tabla(
-        ["Método", "Ruta", "Uso"], [["GET", "/api/v1/estado", "estado general (sin borradores ni textos de ciudadanos)"],
-                                    ["POST", "/api/v1/dispositivos/confirmaciones", "confirmaciones de las terminales (se auditan)"],
-                                    ["GET", "/api/v1/salud", "comprobación de salud"]])], spacing=8), padding=10)])
+        ["Método", "Ruta", "Uso"], [["GET", "/api/v1/dispositivo/mision", "la terminal pide su misión activa (token por vehículo)"],
+                                    ["POST", "/api/v1/dispositivo/eventos", "llegada, entrega o incidencia (idempotente por uid)"],
+                                    ["POST", "/api/v1/dispositivo/latido", "señal de vida y versión de firmware"],
+                                    ["GET", "/api/v1/salud", "comprobación de salud (pública)"]])], spacing=8), padding=10)])
 
     actualizar = C.boton("Actualizar", lambda e: repintar(e), ft.Icons.REFRESH, "secundario", tooltip="Vuelve a leer flota, misiones y eventos")
     repintar()

@@ -32,3 +32,14 @@ Entorno: Claude Code → skills en `.claude/skills/<nombre>/SKILL.md`; `CLAUDE.m
 
 ## D-07 Base de datos
 Se mantiene SQLite con tablas documento (JSON validado por Pydantic): migraciones por campos con valor por defecto; ver `docs/BASE_DE_DATOS.md`.
+
+## D-08 Reparto nube: Supabase + Vercel (API) + UI Flet como proceso (2026-10-17)
+- **Decisión:** Supabase = PostgreSQL + Storage privado + Auth; Vercel = solo la API FastAPI (una Function, `pyproject.toml` con `tool.vercel.entrypoint = "api.main:app"`); la UI Flet sigue siendo un proceso persistente (Windows/Raspberry/otro host) conectado a la misma base.
+- **Evidencia:** la UI Flet guarda el estado de sesión en el servidor y usa WebSocket; Vercel soporta WebSocket en Python solo en **beta**, cierra cada conexión al llegar a `maxDuration` (300 s Hobby / 800 s Pro) y no comparte memoria entre instancias. Fuentes y fecha en `docs/DESPLIEGUE.md` §2-3. Python 3.14 **sí** está soportado en Vercel (3.12 por defecto, 3.13, 3.14).
+- **Alternativas descartadas por ahora:** UI en Vercel (arriba); reescribir la UI como web estática (fuera de alcance); alojar la UI en un servicio de procesos de terceros (viable, no verificado ni contratado).
+- **Dependencias:** se conserva `requirements.txt` (conjunto completo; la guía de instalación no cambia). La función de Vercel se instala desde `pyproject.toml` + `uv.lock` (solo API, ≈ 63 MB), mantenidos en sincronía con `requirements-servidor.txt` por `tests/test_despliegue.py`.
+- **Fotos:** el límite de 4,5 MB por petición obliga a un tope de 1 MiB por foto en la ruta HTTP o a subida directa a Storage (§5 de `docs/DESPLIEGUE.md`).
+- **Riesgos aceptados:** arranque en frío, estado en memoria (límites de tasa) por instancia, Hobby solo no comercial. **No desplegado ni probado en las plataformas reales.**
+
+## D-09 Secretos y perfiles
+`.env.example` documenta todas las variables con perfiles (local, pruebas, producción) y marca las secretas. `scripts/revisar_secretos.py` (y `tests/test_despliegue.py`) escanea los archivos versionados en busca de claves de Google, JWT, cadenas PostgreSQL con contraseña, `service_role` y tokens largos. Las pruebas no leen `.env`. Un hallazgo exige rotar la clave, no solo borrarla.

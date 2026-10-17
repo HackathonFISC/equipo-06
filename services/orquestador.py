@@ -16,16 +16,33 @@ Reglas que no se rompen (ver docs/IA_GEMINI.md):
     termina en una `Recomendacion` en estado «propuesta» que una persona decide (services.workflow_ia).
 """
 
+import os
 import time
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from models.schemas import (Asignacion, Cisterna, EstadoReporte, EtapaIA, Parada, Recomendacion, Reporte,
                             Sector)
-from services import geoloc, ia_tareas, ingest, planner, prioritization, tracing
+from services import geoloc, ia_gemini, ia_tareas, ingest, planner, prioritization, tracing
 
 ETAPAS = ("validacion", "duplicados", "clasificacion", "prioridad", "recomendacion", "asignacion")
 ETAPAS_CON_IA = ("clasificacion", "recomendacion")
 ESTADOS_ANALIZABLES = (EstadoReporte.POR_REVISAR, EstadoReporte.CONFIRMADO)
+
+# Presupuesto TOTAL de tiempo de las dos etapas con IA de un análisis (segundos). Pensado para funciones
+# serverless con límite por invocación: al agotarse, las etapas con IA que falten usan el respaldo local
+# (`reglas(fallback)`) y el análisis termina igual. Sin presupuesto, el peor caso sería
+# 2 llamadas x (15 s + 1,5 s de pausa + 15 s) = 63 s. Con 20 s el análisis termina en ~20 s + el cálculo
+# determinista (decenas de ms). La API de Gemini exige plazos >= 10 s (ia_gemini.MINIMO_UTIL_S): un presupuesto
+# menor equivale a desactivar la IA en el análisis. Ajuste: HIDRO360_IA_PRESUPUESTO_S.
+PRESUPUESTO_IA_S = 20.0
+
+
+def presupuesto_ia_s() -> float:
+    try:
+        v = float(os.environ.get("HIDRO360_IA_PRESUPUESTO_S", "") or PRESUPUESTO_IA_S)
+    except ValueError:
+        return PRESUPUESTO_IA_S
+    return v if v > 0 else PRESUPUESTO_IA_S
 
 # (estado, proveedor, resumen, detalle) que devuelve cada etapa; el resultado útil queda en `memoria`.
 _Salida = Tuple[str, str, str, Dict[str, Any]]
@@ -119,6 +136,8 @@ def analizar(r: Reporte, reportes: List[Reporte], sectores: List[Sector], cister
                "difiere_del_reporte": [c for c, v in (("sector", ex.sector), ("severidad", ex.severidad))
                                        if v is not None and getattr(r, c) is not None and v != getattr(r, c)],
                "nota": "Informativa: no modifica el reporte; la confianza declarada es subjetiva, no calibrada."}
+        if ex.metodo == "reglas(fallback)":
+            det["motivo_fallback"] = next((n.split(": ", 1)[1] for n in ex.notas if n.startswith("Motivo del fallback")), "")
         estado = "fallback" if ex.metodo == "reglas(fallback)" else "ok"
         return (estado, ex.metodo, f"Clasificado como '{ex.tipo_incidencia or 'sin tipo'}' ({ex.metodo}).", det)
 
@@ -190,11 +209,12 @@ def analizar(r: Reporte, reportes: List[Reporte], sectores: List[Sector], cister
     pasos: List[Tuple[str, Callable[[], _Salida]]] = [
         ("duplicados", duplicados), ("clasificacion", clasificacion), ("prioridad", prioridad),
         ("recomendacion", recomendacion), ("asignacion", asignacion)]
-    for nombre, fn in pasos:
-        if detenido:
-            omitida(nombre, "Flujo detenido en la validación: " + primera.resumen)
-            continue
-        _etapa(nombre, r.id, fn, etapas)  # un error o una etapa «omitida» no detiene las siguientes
+    with ia_gemini.presupuesto(presupuesto_ia_s()):
+        for nombre, fn in pasos:
+            if detenido:
+                omitida(nombre, "Flujo detenido en la validación: " + primera.resumen)
+                continue
+            _etapa(nombre, r.id, fn, etapas)  # un error o una etapa «omitida» no detiene las siguientes
 
     if not mem["accion"]:
         mem["accion"] = ("No se generó una acción sugerida: " + primera.resumen) if detenido else \

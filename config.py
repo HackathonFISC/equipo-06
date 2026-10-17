@@ -69,7 +69,9 @@ VULN_PERSONAS_VULNERABLES = 0.75  # adultos mayores, niños pequeños, enfermos 
 # Fotografías subidas: fuera del código y de Git. En la Raspberry: /var/lib/hidro360/media.
 MEDIA_DIR = Path(_env_compat("HIDRO360_MEDIA_DIR", "AGUA_CLARA_MEDIA_DIR") or BASE_DIR / "media")
 MAX_FOTOS_POR_REPORTE = 3
-MAX_BYTES_FOTO = 3 * 1024 * 1024
+# Tope por foto. Local/Raspberry: 3 MiB. En Vercel el cuerpo de una peticion no puede superar 4,5 MB y las fotos viajan
+# en base64 (+33 %): para 3 fotos use HIDRO360_MAX_BYTES_FOTO=1048576 (3 x 1 MiB ~ 4,2 MB). Ver docs/DESPLIEGUE.md.
+MAX_BYTES_FOTO = int(os.environ.get("HIDRO360_MAX_BYTES_FOTO", "").strip() or 3 * 1024 * 1024)
 _traza = _env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE")
 TRACE_PATH = Path(_traza) if _traza and _traza.lower() != "stdout" else BASE_DIR / "logs" / "trazas.jsonl"
 

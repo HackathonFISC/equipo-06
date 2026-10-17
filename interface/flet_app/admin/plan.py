@@ -15,14 +15,16 @@ def build(ctx) -> ft.Control:
                            ", ".join(c.sectores_elegibles) if c.sectores_elegibles else "todos"] for c in cist])
     metodo = C.lista_desplegable("Método", list(planner.METODOS), "flujo", width=160)
 
+    boton_generar = C.boton("Generar propuesta de plan", lambda e: generar(e), ft.Icons.PLAY_ARROW)
+
     def generar(e):
         ok, _ = ctx.ejecutar(lambda: workflow.generar_plan(ctx.responsable, metodo.value or "flujo"),
-                             "Propuesta generada. Revísela: aún NO está aprobada.")
+                             "Propuesta generada. Revísela: aún NO está aprobada.", bloquear=boton_generar)
         if ok:
             ctx.seleccion.pop("plan_id", None)
             ctx.refrescar()
 
-    cabecera = C.panel(ft.Column([tabla_cist, ft.Row([metodo, C.boton("Generar propuesta de plan", generar, ft.Icons.PLAY_ARROW)], spacing=12)], spacing=12),
+    cabecera = C.panel(ft.Column([tabla_cist, ft.Row([metodo, boton_generar], spacing=12, wrap=True)], spacing=12),
                        "Cisternas")
     planes = workflow.listar_planes()
     if not planes:
@@ -87,6 +89,11 @@ def build(ctx) -> ft.Control:
             ctx.refrescar()
 
     def decidir(accion, ok_msg, peligro):
+        if accion == AccionDecision.RECHAZAR and not (motivo.value or "").strip():
+            motivo.error_text = "Escriba por qué rechaza el plan."
+            ctx.actualizar()
+            return
+        motivo.error_text = None
         def hacer():
             ok, _ = ctx.ejecutar(lambda: workflow.decidir_plan(plan.id, accion, ctx.responsable, motivo.value or ""), ok_msg)
             if ok:

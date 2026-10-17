@@ -7,6 +7,7 @@ Aquí no hay reglas de negocio: las páginas usan services.workflow mediante Ctx
 Ocultar secciones no es seguridad; la autorización real se comprueba en services.auth / workflow."""
 
 import argparse
+import asyncio
 import importlib
 import traceback
 from pathlib import Path
@@ -49,6 +50,7 @@ GRUPOS_ADMIN = [
         ("metricas", "Métricas operativas", ft.Icons.BAR_CHART, "metricas"),
         ("auditoria", "Auditoría", ft.Icons.HISTORY, "auditoria")]),
     ("SISTEMA", [
+        ("usuarios", "Usuarios", ft.Icons.MANAGE_ACCOUNTS, "usuarios"),
         ("configuracion", "Configuración e integraciones", ft.Icons.SETTINGS, "configuracion")]),
     ("DIAGNÓSTICO Y DESARROLLO", [
         ("trazas", "Trazas", ft.Icons.TIMELINE, "trazas"),
@@ -115,19 +117,26 @@ def main(page: ft.Page) -> None:
     def nav_portal(clave, etiqueta, icono):
         activo = clave == ctx.pagina_actual
         color = T.NAVY if activo else "#52627a"
-        fila = [ft.Icon(icono, size=18, color=color)] + ([] if estado["compacto"] else [ft.Text(etiqueta, size=13.5, weight=ft.FontWeight.W_700 if activo else ft.FontWeight.W_500, color=color)])
-        return ft.Container(ft.Row(fila, spacing=6), padding=ft.Padding.symmetric(horizontal=12, vertical=8), border_radius=10,
-                            bgcolor="#e8f5ff" if activo else None, tooltip=etiqueta, ink=True, on_click=lambda e, k=clave: ctx.ir(k))
+        fila = [ft.Icon(icono, size=20, color=color)] + ([] if estado["compacto"] else [ft.Text(etiqueta, size=13.5, weight=ft.FontWeight.W_700 if activo else ft.FontWeight.W_500, color=color)])
+        # alto mínimo 44 px: objetivo táctil cómodo en el celular
+        return ft.Container(ft.Row(fila, spacing=6, alignment=ft.MainAxisAlignment.CENTER), padding=ft.Padding.symmetric(horizontal=10 if estado["compacto"] else 12, vertical=10),
+                            border_radius=10, bgcolor="#e8f5ff" if activo else None, tooltip=etiqueta, ink=True, height=44,
+                            on_click=lambda e, k=clave: ctx.ir(k))
 
     def armar_portal() -> ft.Control:
-        marca = ft.Container(ft.Row([C.logo(40), ft.Text(config.APP_NAME, size=20, weight=ft.FontWeight.W_800, color=T.NAVY)], spacing=10),
+        angosto = bool(page.width and page.width < 560)
+        marca = ft.Container(ft.Row([C.logo(36 if estado["compacto"] else 40)] + ([] if angosto else [ft.Text(config.APP_NAME, size=20, weight=ft.FontWeight.W_800, color=T.NAVY)]), spacing=10),
                              ink=True, on_click=lambda e: ctx.ir("inicio"), tooltip="Ir al inicio")
-        navegacion = ft.Row([nav_portal(k, e, i) for k, e, i, _ in PORTAL], spacing=4)
-        acceso = ft.TextButton("Acceso administración", icon=ft.Icons.ADMIN_PANEL_SETTINGS, on_click=lambda e: ctx.ir("login"),
-                               tooltip="Entrada para el personal autorizado", style=ft.ButtonStyle(color=T.MUTED if ctx.pagina_actual != "login" else T.NAVY))
+        navegacion = ft.Row([nav_portal(k, e, i) for k, e, i, _ in PORTAL], spacing=2)
+        if estado["compacto"]:   # una sola fila en el celular: acceso de administración como icono
+            acceso = ft.IconButton(ft.Icons.ADMIN_PANEL_SETTINGS, tooltip="Acceso administración (personal autorizado)", on_click=lambda e: ctx.ir("login"),
+                                   icon_color=T.MUTED if ctx.pagina_actual != "login" else T.NAVY)
+        else:
+            acceso = ft.TextButton("Acceso administración", icon=ft.Icons.ADMIN_PANEL_SETTINGS, on_click=lambda e: ctx.ir("login"),
+                                   tooltip="Entrada para el personal autorizado", style=ft.ButtonStyle(color=T.MUTED if ctx.pagina_actual != "login" else T.NAVY))
         barra = ft.Container(ft.Row([marca, navegacion, acceso], alignment=ft.MainAxisAlignment.SPACE_BETWEEN, vertical_alignment=ft.CrossAxisAlignment.CENTER,
-                                    wrap=True, run_spacing=4),
-                             bgcolor=T.WHITE, padding=ft.Padding.symmetric(horizontal=20, vertical=8), border=ft.Border(bottom=ft.BorderSide(1, T.LINE)))
+                                    wrap=not estado["compacto"], run_spacing=4),
+                             bgcolor=T.WHITE, padding=ft.Padding.symmetric(horizontal=10 if estado["compacto"] else 20, vertical=6), border=ft.Border(bottom=ft.BorderSide(1, T.LINE)))
         pie = ft.Container(ft.Row([ft.Text(f"{config.APP_NAME} · {config.EQUIPO}", size=11.5, color=T.MUTED), C.pill("demostración", "neutro")],
                                   spacing=10, alignment=ft.MainAxisAlignment.CENTER, wrap=True),
                            bgcolor=T.WHITE, padding=ft.Padding.symmetric(horizontal=20, vertical=8), border=ft.Border(top=ft.BorderSide(1, T.LINE)))
@@ -195,6 +204,7 @@ def main(page: ft.Page) -> None:
     # ------------------------------------------------------------- ensamblado
     def pintar():
         estado["compacto"] = compacto()
+        contenido.padding = ft.Padding.symmetric(horizontal=14 if estado["compacto"] else 26, vertical=14 if estado["compacto"] else 20)
         raiz.content = armar_admin() if ctx.pagina_actual in CLAVES_ADMIN else armar_portal()
 
     def mostrar(clave: str) -> None:
@@ -213,6 +223,17 @@ def main(page: ft.Page) -> None:
     page.on_resize = lambda e: (pintar(), page.update())
     page.add(raiz)
     mostrar("inicio")
+
+    async def ajustar_al_arrancar():
+        """Flet informa el ancho real un instante después de conectar y no siempre dispara on_resize: se repinta si cambió."""
+        for _ in range(6):
+            await asyncio.sleep(0.5)
+            if compacto() != estado["compacto"]:
+                pintar()
+                page.update()
+                break
+
+    page.run_task(ajustar_al_arrancar)
 
 
 def run(argv: Optional[list] = None) -> None:

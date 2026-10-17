@@ -7,10 +7,20 @@ duración, estado, uso de Gemini o fallback local). No son la auditoría de nego
 - Integridad: cada línea lleva `hash` = sha256(hash_previo + contenido). Alterar o borrar una línea
   intermedia rompe la cadena y `verificar_integridad()` lo detecta (no impide modificar el archivo;
   lo hace detectable. Truncar el final no es detectable sin anclar el último hash fuera del archivo).
+- Modo sin disco (HIDRO360_TRACE=stdout, o plataforma Vercel): una línea JSON por evento en la salida estándar, SIN
+  cadena de hashes. Razón: la cadena exige leer el último eslabón y añadir de forma atómica, y una función serverless
+  no tiene disco persistente ni un único escritor (varias instancias a la vez romperían la cadena). La trazabilidad
+  de NEGOCIO sigue íntegra porque la AUDITORÍA (services/audit.py) vive en la base, con su cadena de hashes, dentro
+  de la misma transacción que cada cambio. Las trazas son diagnóstico y las recoge el agregador de logs de la plataforma.
+- Ningún valor sale sin pasar por `depurar()`: se enmascaran cadenas de conexión, JWT, cabeceras Bearer, claves
+  `sb_secret_`/`AIza…` y el contenido literal de los secretos configurados en el entorno.
 """
 
 import hashlib
 import json
+import os
+import re
+import sys
 import threading
 import time
 import uuid
@@ -27,6 +37,28 @@ _run_id: ContextVar[Optional[str]] = ContextVar("run_id", default=None)
 _correlacion: ContextVar[Optional[str]] = ContextVar("correlacion", default=None)
 
 CAMPOS_SENSIBLES = ("key", "token", "password", "secret", "clave")
+_VARS_SECRETAS = ("DATABASE_URL", "GEMINI_API_KEY", "SUPABASE_SERVICE_ROLE_KEY", "SUPABASE_JWT_SECRET",
+                  "SUPABASE_ANON_KEY", "HIDRO360_API_TOKEN", "HIDRO360_DEVICE_TOKEN", "AGUA_CLARA_API_TOKEN",
+                  "AGUA_CLARA_DEVICE_TOKEN")
+_PATRONES_SECRETOS = [
+    re.compile(r"[a-z][a-z0-9+.-]*://[^\s/@:]+:[^\s@]+@[^\s]+", re.IGNORECASE),     # postgresql://usuario:clave@host/db
+    re.compile(r"eyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]*"),            # JWT
+    re.compile(r"(?i)bearer\s+[A-Za-z0-9._~+/=-]{8,}"),
+    re.compile(r"sb_(?:secret|publishable)_[A-Za-z0-9_-]+"),
+    re.compile(r"AIza[0-9A-Za-z_-]{20,}"),
+]
+
+
+def depurar(texto: str) -> str:
+    """Enmascara secretos reconocibles dentro de un texto (defensa en profundidad: los mensajes de error de
+    librerías pueden incluir cadenas de conexión o cabeceras)."""
+    for nombre in _VARS_SECRETAS:
+        v = os.environ.get(nombre, "").strip()
+        if len(v) >= 6:
+            texto = texto.replace(v, "***")
+    for p in _PATRONES_SECRETOS:
+        texto = p.sub("***", texto)
+    return texto
 
 
 def resumir(valor: Any, maximo: int = 160) -> Any:
@@ -37,6 +69,7 @@ def resumir(valor: Any, maximo: int = 160) -> Any:
     if isinstance(valor, (list, tuple)):
         return [resumir(v, maximo) for v in list(valor)[:10]] + (["…"] if len(valor) > 10 else [])
     if isinstance(valor, str):
+        valor = depurar(valor)
         return valor if len(valor) <= maximo else valor[:maximo] + f"…(+{len(valor) - maximo} car.)"
     return valor
 
@@ -64,6 +97,18 @@ def ejecucion(correlation_id: Optional[str] = None) -> Iterator[str]:
 
 def correlacionar(correlation_id: Any) -> None:
     _correlacion.set(str(correlation_id))
+
+
+def _a_stdout() -> bool:
+    """Salida estándar si HIDRO360_TRACE=stdout, o automáticamente en Vercel (sin disco escribible)."""
+    return bool(config.TRACE_A_STDOUT() or os.environ.get("VERCEL"))
+
+
+def _emitir_stdout(cuerpo: Dict[str, Any]) -> Dict[str, Any]:
+    evento = {**cuerpo, "cadena": False}
+    sys.stdout.write(json.dumps(evento, ensure_ascii=False, default=str) + "\n")
+    sys.stdout.flush()
+    return evento
 
 
 def _ultimo_hash() -> str:
@@ -99,13 +144,18 @@ def emitir(agent: str, action: str, status: str = "ok", input_summary: Any = Non
         "correlation_id": correlation_id or _correlacion.get(),
         "detalle": resumir(detalle or {}),
     }
+    if _a_stdout():
+        return _emitir_stdout(cuerpo)
     with _lock:
         ruta = config.TRACE_PATH
-        ruta.parent.mkdir(parents=True, exist_ok=True)
-        previo = _ultimo_hash()
-        evento = {**cuerpo, "hash_previo": previo, "hash": _hash(previo, cuerpo)}
-        with open(ruta, "a", encoding="utf-8") as f:
-            f.write(json.dumps(evento, ensure_ascii=False, default=str) + "\n")
+        try:
+            ruta.parent.mkdir(parents=True, exist_ok=True)
+            previo = _ultimo_hash()
+            evento = {**cuerpo, "hash_previo": previo, "hash": _hash(previo, cuerpo)}
+            with open(ruta, "a", encoding="utf-8") as f:
+                f.write(json.dumps(evento, ensure_ascii=False, default=str) + "\n")
+        except OSError:            # disco de solo lectura (serverless mal configurado): no romper la petición
+            return _emitir_stdout(cuerpo)
     return evento
 
 
@@ -131,7 +181,7 @@ def leer(run_id: Optional[str] = None, agent: Optional[str] = None, status: Opti
          desde: Optional[str] = None, hasta: Optional[str] = None,
          correlation_id: Optional[str] = None) -> List[Dict[str, Any]]:
     ruta = config.TRACE_PATH
-    if not ruta.exists():
+    if _a_stdout() or not ruta.exists():
         return []
     eventos = []
     with open(ruta, encoding="utf-8") as f:
@@ -160,6 +210,10 @@ def leer(run_id: Optional[str] = None, agent: Optional[str] = None, status: Opti
 
 def verificar_integridad() -> Dict[str, Any]:
     """Recorre la cadena. Devuelve {'integra': bool, 'eventos': n, 'linea_rota': n|None}."""
+    if _a_stdout():
+        return {"integra": True, "eventos": 0, "linea_rota": None, "modo": "stdout",
+                "nota": "Las trazas salen por la salida estándar sin cadena de hashes; la auditoría de negocio "
+                        "(base de datos) conserva su cadena."}
     ruta = config.TRACE_PATH
     if not ruta.exists():
         return {"integra": True, "eventos": 0, "linea_rota": None}

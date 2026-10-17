@@ -123,3 +123,13 @@ def test_modo_por_defecto_es_local_sin_claves(monkeypatch):
     monkeypatch.delenv("AI_PROVIDER", raising=False)
     assert config.ai_provider() == "local"
     assert _ex("2 días sin agua en Chame").metodo == "reglas"
+
+
+def test_casos_de_evaluacion_fuerzan_reglas_aun_con_gemini_configurado(monkeypatch):
+    """La evaluación no depende de la clave privada de quien la ejecute ni usa red."""
+    from evaluation import casos
+
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setattr(ingest, "transporte_ia", lambda *_: (_ for _ in ()).throw(AssertionError("no debe llamar a Gemini")))
+    ex = casos._extraer("Dos días sin agua en Nuevo Arraiján, somos seis. Urgente.")
+    assert ex.metodo == "reglas" and ex.severidad and ex.severidad.value == "alta"

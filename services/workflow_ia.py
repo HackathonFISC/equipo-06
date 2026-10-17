@@ -16,7 +16,7 @@ from typing import Any, Dict, List, Optional
 
 from data import database as db
 from models.schemas import EstadoRecomendacion, EstadoReporte, Parada, Recomendacion
-from services import audit, orquestador, tracing, workflow
+from services import audit, geoloc, ia_operador, orquestador, tracing, workflow
 from services.auth import requiere_admin
 from services.workflow import ErrorDeNegocio, operacion
 
@@ -138,3 +138,30 @@ def listar_recomendaciones(estado: Optional[str] = None, reporte_id: Optional[in
 @requiere_admin
 def obtener_recomendacion(recomendacion_id: int) -> Recomendacion:
     return _leer(recomendacion_id)
+
+
+# ----------------------------------------------------------------- ayudas de lectura para el operador
+@requiere_admin
+def resumen_contexto_reporte(reporte_id: int, usar_ia: bool = True) -> Dict[str, Any]:
+    """Contexto de una incidencia: datos del reporte + duplicados sugeridos + historial del sector, con un
+    resumen en lenguaje claro (`resumen.origen`: gemini | reglas | reglas(fallback)). Solo lectura: no cambia
+    nada ni envía el texto del ciudadano a la IA. Devuelve {"datos", "resumen": {"texto","origen",
+    "motivo_fallback"}, "nota"}."""
+    r = workflow._obtener_reporte(reporte_id)
+    reportes = workflow._listar_reportes()
+    duplicados = geoloc.sugerir_duplicados(r, [x for x in reportes if x.id != r.id])
+    return ia_operador.contexto_incidencia(r, duplicados, reportes, workflow.listar_misiones(),
+                                           [s.nombre for s in workflow.listar_sectores()], usar_ia=usar_ia)
+
+
+@requiere_admin
+def detectar_patrones(ventana_horas: int = 72, minimo_reportes: int = 3, usar_ia: bool = True) -> Dict[str, Any]:
+    """Patrones deterministas (sectores con reportes recurrentes y pico por hora) en la ventana indicada.
+    `ventana_horas` 1-720, `minimo_reportes` 2-50. Devuelve {"parametros","generado","reportes_en_ventana",
+    "patrones":[{"tipo","explicacion",...}],"resumen":{"texto","origen","motivo_fallback"},"nota"}."""
+    if not 1 <= int(ventana_horas) <= 720:
+        raise ErrorDeNegocio("La ventana debe estar entre 1 y 720 horas.")
+    if not 2 <= int(minimo_reportes) <= 50:
+        raise ErrorDeNegocio("El mínimo de reportes debe estar entre 2 y 50.")
+    return ia_operador.detectar_patrones(workflow._listar_reportes(), [s.nombre for s in workflow.listar_sectores()],
+                                         int(ventana_horas), int(minimo_reportes), usar_ia=usar_ia)

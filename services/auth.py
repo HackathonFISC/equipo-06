@@ -6,9 +6,11 @@ Autenticación y roles (núcleo). Diseño mínimo y seguro:
 - Contraseñas: scrypt con sal aleatoria por usuario (hashlib, sin dependencias); nunca en texto plano, nunca en el código.
   No existen usuarios ni contraseñas predeterminadas: el primer administrador se crea con
   `python -m scripts.crear_admin` (pide la contraseña sin mostrarla).
-- Sesiones: token aleatorio de 256 bits entregado una sola vez; en memoria solo se guarda su SHA-256 y expiran
-  (SESION_HORAS). Se pierden al reiniciar el proceso (limitación documentada).
-- Fuerza bruta: bloqueo temporal por usuario tras varios fallos seguidos.
+- Sesiones: token aleatorio de 256 bits entregado una sola vez; en la tabla `sesiones` solo se guarda su SHA-256, con
+  vencimiento (SESION_HORAS). Persisten entre reinicios e instancias (serverless) y se revalidan contra el usuario
+  actual en cada petición (desactivar la cuenta las invalida al instante).
+- Fuerza bruta: bloqueo temporal por usuario tras varios fallos seguidos, persistido (services/limites.py).
+- Identidad externa (HIDRO360_AUTH=supabase): ver services/auth_supabase.py; el rol sigue saliendo de esta tabla.
 - Autorización: `requiere_admin` / `requiere_actor` comprueban el `Actor` del contexto de ejecución (ContextVar) en
   la lógica de negocio, no solo en la interfaz. Quien invoca (UI, API) establece el actor con `como(actor)`.
 - Límites: sin recuperación de contraseña, sin MFA, sin HTTPS propio; el canal sin cifrar expone credenciales en la red.
@@ -25,10 +27,10 @@ from contextvars import ContextVar
 from dataclasses import dataclass
 from datetime import datetime
 from enum import Enum
-from typing import Callable, Dict, Iterator, List, Optional, Tuple
+from typing import Callable, Iterator, List, Optional
 
 from data import database as db
-from services import tracing
+from services import limites, tracing
 
 SESION_HORAS = 8
 MIN_CLAVE = 10
@@ -58,8 +60,6 @@ class ErrorAutorizacion(Exception):
 
 
 actor_actual: ContextVar[Optional[Actor]] = ContextVar("actor_actual", default=None)
-_sesiones: Dict[str, Tuple[Actor, float]] = {}
-_fallos: Dict[str, List[float]] = {}
 
 
 # ----------------------------------------------------------------------------- contraseñas
@@ -103,33 +103,34 @@ def listar_usuarios() -> List[dict]:
 
 
 # ------------------------------------------------------------------------------ autenticar
-def _bloqueado(usuario: str) -> bool:
-    ahora = time.monotonic()
-    recientes = [t for t in _fallos.get(usuario, []) if ahora - t < BLOQUEO_SEGUNDOS]
-    _fallos[usuario] = recientes
-    return len(recientes) >= MAX_FALLOS
+def _clave_bloqueo(usuario: str) -> str:
+    return "loginusr:" + usuario
 
 
 def autenticar(usuario: str, clave: str) -> Actor:
-    """Verifica credenciales. Mensaje genérico (no revela si el usuario existe) y tiempo similar con usuario inexistente."""
+    """Verifica credenciales. Mensaje genérico (no revela si el usuario existe) y tiempo similar con usuario inexistente.
+    El bloqueo (5 fallos / 5 min por usuario) vive en la base: vale en cualquier instancia."""
     u = (usuario or "").strip().lower()
-    if _bloqueado(u):
+    if limites.bloqueado(_clave_bloqueo(u)):
         tracing.emitir("auth", "login", "error", {"usuario": u}, {"motivo": "bloqueado"})
         raise ErrorAutenticacion("Demasiados intentos fallidos. Espere unos minutos.")
     d = _doc(u) if u else None
-    sal = bytes.fromhex(d["sal"]) if d else b"\x00" * 16
+    tiene_clave = bool(d and d.get("sal") and d.get("hash"))      # un perfil de Supabase no tiene clave local
+    sal = bytes.fromhex(d["sal"]) if tiene_clave else bytes(16)
     calculado = _hash(clave or "", sal)
-    ok = bool(d) and d.get("activo", True) and hmac.compare_digest(calculado, d["hash"])
+    ok = tiene_clave and d.get("activo", True) and hmac.compare_digest(calculado, d["hash"])
     if not ok:
-        _fallos.setdefault(u, []).append(time.monotonic())
+        limites.fallo(_clave_bloqueo(u), MAX_FALLOS, BLOQUEO_SEGUNDOS)
         tracing.emitir("auth", "login", "error", {"usuario": u}, {"motivo": "credenciales"})
         raise ErrorAutenticacion("Usuario o contraseña incorrectos.")
-    _fallos.pop(u, None)
+    limites.perdonar(_clave_bloqueo(u))
     tracing.emitir("auth", "login", "ok", {"usuario": u, "rol": d["rol"]})
     return Actor(usuario=u, rol=Rol(d["rol"]))
 
 
 # -------------------------------------------------------------------------------- sesiones
+# Persistidas en la tabla `sesiones` (id = SHA-256 del token; el token en claro solo lo conoce el cliente).
+# Se valida en cada petición contra el usuario actual: desactivar la cuenta o cambiar su rol surte efecto al instante.
 def _huella(token: str) -> str:
     return hashlib.sha256(token.encode()).hexdigest()
 
@@ -137,32 +138,50 @@ def _huella(token: str) -> str:
 def iniciar_sesion(usuario: str, clave: str) -> str:
     actor = autenticar(usuario, clave)
     token = secrets.token_urlsafe(32)
-    _sesiones[_huella(token)] = (actor, time.monotonic() + SESION_HORAS * 3600)
+    ahora = time.time()
+    db.insertar("sesiones", {"id": _huella(token), "tipo": "sesion", "usuario": actor.usuario, "rol": actor.rol.value, "origen": actor.origen,
+                             "creada": ahora, "expira": ahora + SESION_HORAS * 3600, "ultimo_uso": ahora},
+                clave=_huella(token))
+    purgar_sesiones_vencidas()
     return token
 
 
 def actor_de_token(token: Optional[str]) -> Optional[Actor]:
-    if not token:
+    if not token or len(token) > 200:
         return None
     h = _huella(token)
-    par = _sesiones.get(h)
-    if not par:
+    s = db.obtener("sesiones", h)
+    if not s or s.get("tipo") != "sesion":
         return None
-    if time.monotonic() > par[1]:
-        _sesiones.pop(h, None)
+    if time.time() >= float(s.get("expira", 0)):
+        db.borrar("sesiones", h)
         return None
-    return par[0]
+    d = _doc(s["usuario"])
+    if not d or not d.get("activo", True):
+        db.borrar("sesiones", h)
+        return None
+    return Actor(usuario=d["usuario"], rol=Rol(d["rol"]), origen=s.get("origen", "sesion"))
 
 
 def cerrar_sesion(token: Optional[str]) -> None:
     if token:
-        _sesiones.pop(_huella(token), None)
+        db.borrar("sesiones", _huella(token))
+
+
+def purgar_sesiones_vencidas() -> int:
+    """Borra sesiones y bloqueos vencidos (mantenimiento oportunista al iniciar sesión)."""
+    ahora, n = time.time(), 0
+    for d in db.listar("sesiones"):
+        if float(d.get("expira", 0)) <= ahora:
+            db.borrar("sesiones", d.get("id"))
+            n += 1
+    return n
 
 
 def reiniciar_estado() -> None:
-    """Pruebas: borra sesiones y contadores de fallos."""
-    _sesiones.clear()
-    _fallos.clear()
+    """Pruebas: borra sesiones, bloqueos y contadores de límites de la base activa."""
+    db.vaciar(["sesiones"])
+    db.limpiar_limites(0)
 
 
 # ----------------------------------------------------------------------------- autorización

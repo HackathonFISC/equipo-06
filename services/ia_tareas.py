@@ -26,6 +26,11 @@ from services.textutil import normalizar
 
 PROMESA_HORA = re.compile(r"\b\d{1,2}[:h]\d{2}\b|llegar[aá]\s+(a las|en|hoy|mañana)|llegaremos|en \d+ (minutos|horas)", re.I)
 
+# Para resúmenes del operador, que citan fechas/horas pasadas («en 72 horas», «a las 18:00»): solo se
+# rechaza lo que anuncia una llegada o envío futuro con hora/plazo.
+PROMESA_FUTURA = re.compile(r"\b(llegar[aá]n?|llegaremos|arribar[aá]n?|estar[aá]n? (all[ií]|ah[ií]|en)|se enviar[aá]n?|enviaremos)\b"
+                            r".{0,60}?(\b\d{1,2}[:h]\d{2}\b|\ba las \d|\ben \d+ (minutos|horas)|\bhoy\b|\bma[ñn]ana\b)", re.I)
+
 _SISTEMA_RESUMEN = ("Redactas, en español claro y en máximo 3 frases, por qué un sector tiene cierta prioridad de "
                     "atención de agua. Usa SOLO los datos del JSON recibido; no inventes cifras ni causas. "
                     "Devuelve un JSON {\"resumen\": \"...\"}.")
@@ -84,6 +89,7 @@ def borrador_comunicacion(sector: str, litros: int, cisternas: List[str]) -> Dic
 _SISTEMA_RECOMENDACION = (
     "Redactas, en español claro y en máximo 3 frases, la ACCIÓN SUGERIDA para atender un reporte de falta de agua. "
     "Usa SOLO los datos del JSON recibido (sector, prioridad, categoría, horas, personas, duplicados). "
+    "Escribe las cifras tal cual aparecen en los datos (no conviertas horas a días ni calcules nada). "
     "No menciones otros sectores, cisternas, litros ni cifras que no estén en los datos; no incluyas datos "
     "personales; no prometas hora ni fecha de llegada; la decisión final es de una persona. "
     "Devuelve únicamente un JSON {\"accion\": \"...\"}."
@@ -99,6 +105,12 @@ class SalidaRecomendacion(BaseModel):
     accion: str = Field(min_length=10, max_length=500)
 
 
+class SalidaResumen(BaseModel):
+    """Esquema ESTRICTO de los resúmenes para el operador (contexto de incidencia, patrones)."""
+    model_config = {"extra": "forbid"}
+    resumen: str = Field(min_length=10, max_length=700)
+
+
 def _canon_numeros(texto: str) -> set:
     salida = set()
     for n in re.findall(r"\d+(?:[.,]\d+)?", texto):
@@ -109,23 +121,29 @@ def _canon_numeros(texto: str) -> set:
     return salida
 
 
-def validar_recomendacion(texto: str, datos: Dict[str, Any], sectores: List[str], cisternas: List[str]) -> str:
-    """Revalida con código lo que redactó el modelo. Lanza ErrorIA si no es seguro mostrarlo."""
+def validar_recomendacion(texto: str, datos: Dict[str, Any], sectores: List[str], cisternas: List[str],
+                          maximo: int = 500, permitidos: Optional[List[str]] = None,
+                          horas_pasadas_ok: bool = False) -> str:
+    """Revalida con código lo que redactó el modelo. Lanza ErrorIA si no es seguro mostrarlo.
+    `permitidos`: sectores que sí pueden nombrarse además de `datos["sector"]` (están en los datos enviados)."""
     t = (texto or "").strip()
-    if not t or len(t) > 500:
+    if not t or len(t) > maximo:
         raise ia_gemini.ErrorIA("recomendación vacía o demasiado larga")
     if _RE_CORREO.search(t) or _RE_TEL.search(t):
         raise ia_gemini.ErrorIA("la recomendación contiene datos personales")
-    if PROMESA_HORA.search(t):
+    if (PROMESA_FUTURA if horas_pasadas_ok else PROMESA_HORA).search(t):
         raise ia_gemini.ErrorIA("la recomendación promete una hora de llegada")
     if not _canon_numeros(t) <= _canon_numeros(json.dumps(datos, ensure_ascii=False)):
         raise ia_gemini.ErrorIA("la recomendación introduce cifras que no estaban en los datos")
     nt = normalizar(t)
-    propio = normalizar(str(datos.get("sector") or ""))
-    resto = nt.replace(propio, " ") if propio else nt
+    propios = {normalizar(str(datos.get("sector") or ""))} | {normalizar(p) for p in (permitidos or [])}
+    propios.discard("")
+    resto = nt
+    for propio in sorted(propios, key=len, reverse=True):
+        resto = resto.replace(propio, " ")
     for s in sectores:
         ns = normalizar(s)
-        if ns and ns != propio and re.search(rf"\b{re.escape(ns)}\b", resto):
+        if ns and ns not in propios and re.search(rf"\b{re.escape(ns)}\b", resto):
             raise ia_gemini.ErrorIA(f"la recomendación menciona un sector no incluido en los datos ({s})")
     if any(c.lower() in t.lower() for c in cisternas) or _RE_ID_RECURSO.search(t):
         raise ia_gemini.ErrorIA("la recomendación menciona una cisterna que no está en sus datos")

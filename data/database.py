@@ -1,149 +1,95 @@
 """
-Persistencia local con SQLite (stdlib). Sin ORM: tablas simples y contratos Pydantic.
+Persistencia de HIDRO360: tablas «documento» (id + JSON validado por Pydantic). Sin ORM.
 
-Cada función abre una conexión corta; la base es un solo archivo (config.DB_PATH),
-fácil de copiar a una Raspberry Pi.
+Fachada con DOS motores intercambiables, elegidos en cada llamada:
+  * SQLite (stdlib, `data/_sqlite.py`)       por defecto; un archivo (config.DB_PATH), funciona sin internet.
+  * PostgreSQL/Supabase (`data/_postgres.py`) si `config.DATABASE_URL()` está definida (`config.modo_postgres()`).
+`services/` solo conoce esta API; no sabe qué motor hay debajo. Misma semántica y firmas en ambos (la suite
+tests/test_database_contrato.py lo comprueba con las mismas aserciones).
+
+API: insertar, actualizar, obtener, listar, ultimo, borrar, vaciar, transaccion, conexion,
+registrar_evento_limite, limpiar_limites. `transaccion()`/`conexion()` ceden la conexión del motor activo
+(sqlite3.Connection o psycopg.Connection): el código de negocio no debería usarla directamente.
 """
 
-import json
-import sqlite3
-import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
 import config
+from data._comun import (CLAVES, TABLAS, ErrorBaseDeDatos, ErrorConexionBD, ErrorIntegridadBD,  # noqa: F401
+                         EsquemaNoAplicado)
+from data import _sqlite
 
-SCHEMA = """
-CREATE TABLE IF NOT EXISTS sectores (
-    nombre TEXT PRIMARY KEY, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS cisternas (
-    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS reportes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS planes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS decisiones_duplicado (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS auditoria (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS usuarios (
-    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS fotos (
-    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS dispositivos (
-    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS misiones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS eventos_mision (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS recomendaciones (
-    id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
-"""
-
-# `usuarios`, `dispositivos` y `fotos` NO están aquí: reiniciar la demo no debe borrar cuentas, identidades
-# de terminales ni archivos subidos. Misiones/eventos/recomendaciones sí se reinician con los datos de ejemplo.
-TABLAS = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria",
-          "misiones", "eventos_mision", "recomendaciones"]
+SCHEMA = _sqlite.SCHEMA  # esquema SQLite (el de PostgreSQL está en supabase/migrations)
 
 
-_local = threading.local()
+def _motor():
+    if config.modo_postgres():
+        from data import _postgres   # import perezoso: SQLite no necesita psycopg
+        return _postgres
+    return _sqlite
 
 
-def _abrir() -> sqlite3.Connection:
-    con = sqlite3.connect(str(config.DB_PATH), timeout=15, isolation_level=None)
-    con.row_factory = sqlite3.Row
-    con.executescript(SCHEMA)
-    return con
+def motor() -> str:
+    """'postgres' o 'sqlite' (para diagnósticos; no cambie su comportamiento según el motor)."""
+    return "postgres" if config.modo_postgres() else "sqlite"
 
 
 @contextmanager
-def transaccion() -> Iterator[sqlite3.Connection]:
-    """Agrupa varias operaciones (cambio de negocio + auditoría) en UNA transacción atómica.
-    BEGIN IMMEDIATE serializa escritores; si algo falla se revierte todo. Es reentrante."""
-    if getattr(_local, "con", None) is not None:
-        yield _local.con
-        return
-    con = _abrir()
-    _local.con = con
-    try:
-        con.execute("BEGIN IMMEDIATE")
+def transaccion() -> Iterator[Any]:
+    """Una transacción atómica reentrante que serializa a los escritores de negocio (SQLite: BEGIN IMMEDIATE;
+    PostgreSQL: pg_advisory_xact_lock). Cambio + auditoría + traza van dentro; si algo falla se revierte todo."""
+    with _motor().transaccion() as con:
         yield con
-        con.execute("COMMIT")
-    except BaseException:
-        if con.in_transaction:
-            con.execute("ROLLBACK")
-        raise
-    finally:
-        _local.con = None
-        con.close()
 
 
 @contextmanager
-def conexion() -> Iterator[sqlite3.Connection]:
-    activa = getattr(_local, "con", None)
-    if activa is not None:  # dentro de transaccion(): la confirma el contexto externo
-        yield activa
-        return
-    con = _abrir()
-    try:
-        con.execute("BEGIN")
+def conexion() -> Iterator[Any]:
+    with _motor().conexion() as con:
         yield con
-        con.execute("COMMIT")
-    except BaseException:
-        if con.in_transaction:
-            con.execute("ROLLBACK")
-        raise
-    finally:
-        con.close()
-
-
-def _dump(d: Dict[str, Any]) -> str:
-    return json.dumps(d, ensure_ascii=False, default=str)
 
 
 def insertar(tabla: str, datos: Dict[str, Any], clave: Optional[str] = None) -> Any:
-    """Inserta un documento. Si la tabla usa clave de texto, `clave` es obligatoria.
+    """Inserta un documento. Si la tabla usa clave de texto, `clave` es obligatoria (y reemplaza si existe).
     Devuelve el id (autoincremental o la clave)."""
-    with conexion() as con:
-        if clave is not None:
-            col = "nombre" if tabla == "sectores" else "id"
-            con.execute(f"INSERT OR REPLACE INTO {tabla} ({col}, datos) VALUES (?, ?)", (clave, _dump(datos)))
-            return clave
-        cur = con.execute(f"INSERT INTO {tabla} (datos) VALUES (?)", ("{}",))
-        nuevo_id = cur.lastrowid
-        datos = {**datos, "id": nuevo_id}
-        con.execute(f"UPDATE {tabla} SET datos = ? WHERE id = ?", (_dump(datos), nuevo_id))
-        return nuevo_id
+    return _motor().insertar(tabla, datos, clave)
 
 
 def actualizar(tabla: str, clave: Any, datos: Dict[str, Any]) -> None:
-    col = "nombre" if tabla == "sectores" else "id"
-    with conexion() as con:
-        con.execute(f"UPDATE {tabla} SET datos = ? WHERE {col} = ?", (_dump(datos), clave))
+    _motor().actualizar(tabla, clave, datos)
 
 
 def obtener(tabla: str, clave: Any) -> Optional[Dict[str, Any]]:
-    col = "nombre" if tabla == "sectores" else "id"
-    with conexion() as con:
-        fila = con.execute(f"SELECT datos FROM {tabla} WHERE {col} = ?", (clave,)).fetchone()
-    return json.loads(fila["datos"]) if fila else None
+    return _motor().obtener(tabla, clave)
 
 
 def listar(tabla: str) -> List[Dict[str, Any]]:
-    orden = "nombre" if tabla == "sectores" else "id"
-    with conexion() as con:
-        filas = con.execute(f"SELECT datos FROM {tabla} ORDER BY {orden}").fetchall()
-    return [json.loads(f["datos"]) for f in filas]
-
-
-def vaciar(tablas: Optional[List[str]] = None) -> None:
-    with conexion() as con:
-        for t in tablas or TABLAS:
-            con.execute(f"DELETE FROM {t}")
-            con.execute("DELETE FROM sqlite_sequence WHERE name = ?", (t,))
+    return _motor().listar(tabla)
 
 
 def ultimo(tabla: str) -> Optional[Dict[str, Any]]:
-    with conexion() as con:
-        fila = con.execute(f"SELECT datos FROM {tabla} ORDER BY id DESC LIMIT 1").fetchone()
-    return json.loads(fila["datos"]) if fila else None
+    return _motor().ultimo(tabla)
+
+
+def borrar(tabla: str, clave: Any) -> int:
+    """Borra un documento por su clave y devuelve cuántas filas se borraron (0 o 1)."""
+    return _motor().borrar(tabla, clave)
+
+
+eliminar = borrar  # alias de compatibilidad (algunas pruebas lo buscan con ese nombre)
+
+
+def vaciar(tablas: Optional[List[str]] = None) -> None:
+    """Vacía las tablas dadas (por defecto `TABLAS`, las de la demo) y reinicia sus contadores."""
+    _motor().vaciar(tablas)
+
+
+def registrar_evento_limite(clave: str, ventana_s: int) -> int:
+    """Registra un evento para `clave` (p. ej. "login:ip") y devuelve cuántos eventos con esa clave hay en los
+    últimos `ventana_s` segundos, incluido este. Alta y recuento son atómicos y compartidos entre instancias."""
+    return _motor().registrar_evento_limite(clave, ventana_s)
+
+
+def limpiar_limites(antes_s: int = 86400) -> int:
+    """Borra los eventos de límite con más de `antes_s` segundos. Devuelve cuántos borró."""
+    return _motor().limpiar_limites(antes_s)

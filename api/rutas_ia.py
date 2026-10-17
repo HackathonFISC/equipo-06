@@ -7,9 +7,9 @@ Rutas del flujo asistido por IA. NO importa api.main (evita ciclos): el líder l
 (ErrorDeNegocio, autenticación, autorización) los traducen los manejadores globales de la aplicación.
 """
 
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, ConfigDict, Field
 
 from models.schemas import Parada, Recomendacion
@@ -56,5 +56,16 @@ def crear_router(admin_dep: Callable[..., Any]) -> APIRouter:
     def decidir(recomendacion_id: int, body: DecisionRecomendacion, actor=Depends(admin_dep)):
         return _ejecutar(actor, workflow_ia.decidir_recomendacion, recomendacion_id, body.accion,
                          body.responsable or actor.usuario, body.motivo, body.cisterna_id, body.paradas)
+
+    @router.get("/reportes/{reporte_id}/contexto")
+    def contexto(reporte_id: int, usar_ia: bool = True, actor=Depends(admin_dep)) -> Dict[str, Any]:
+        """Resumen de contexto para el operador (reporte + duplicados sugeridos + historial del sector)."""
+        return _ejecutar(actor, workflow_ia.resumen_contexto_reporte, reporte_id, usar_ia)
+
+    @router.get("/patrones")
+    def patrones(ventana_horas: int = Query(72, ge=1, le=720), minimo_reportes: int = Query(3, ge=2, le=50),
+                 usar_ia: bool = True, actor=Depends(admin_dep)) -> Dict[str, Any]:
+        """Patrones deterministas (sector recurrente, pico horario) con explicación en lenguaje claro."""
+        return _ejecutar(actor, workflow_ia.detectar_patrones, ventana_horas, minimo_reportes, usar_ia)
 
     return router

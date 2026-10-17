@@ -35,6 +35,20 @@ flowchart LR
     classDef ext fill:#dbeaf5,stroke:#0f4466,color:#0f4466;
 ```
 
+## Despliegue: reparto de componentes
+```mermaid
+flowchart LR
+    U([Ciudadanía / administración]) -->|WebSocket de Flet| UI[UI Flet<br/>proceso Python: Windows · Raspberry · otro host]
+    ESP[ESP32-S3 por cisterna] -->|HTTPS + X-Device-Token| API[API FastAPI<br/>Vercel Function sin estado]
+    UI -->|DATABASE_URL<br/>pooler sesión 5432| PG[(Supabase PostgreSQL)]
+    API -->|pooler transacción 6543<br/>prepare_threshold=None| PG
+    UI --> ST[(Supabase Storage privado)]
+    API --> ST
+    API -.-> GEM[Gemini opcional]
+    UI -.-> GEM
+```
+La UI y la API comparten `services/workflow.py` y la misma base; solo cambia el proceso que las aloja. Sin `DATABASE_URL` todo corre con SQLite local (demo, Raspberry). Motivos, límites verificados de Vercel y riesgos: `docs/DESPLIEGUE.md` y `docs/DECISIONES.md` D-08.
+
 ## Reglas de la arquitectura
 - `services/workflow.py` es la **única puerta** de entrada para la UI y la API; la interfaz no calcula reglas.
 - Cada operación que cambia datos corre en **una transacción SQLite** junto con su entrada de auditoría.

@@ -15,8 +15,16 @@ Coordinación explicable de reportes de falta de agua y propuesta de distribuci�
 | Planificador por flujo máximo; Gini; experimento línea base vs HIDRO360 (sintético) | Casos **oficiales**: la guía no los enumera; los del runner los redactó el equipo |
 | Pruebas automáticas (`pytest -q`) y casos del runner (`python -m evaluation.run_cases`); cifras vigentes: ejecútelos | Escritorio en otros SO; video de demostración (solo hay guion) |
 
-## Instalar y ejecutar (Windows)
-Requiere Python 3.10+ (probado con 3.14).
+## Inicio rápido (Windows)
+Requiere Python 3.10+ (probado con 3.14). Con el script de flujo (crea `.venv`, instala, copia `.env.example` a `.env` sin pisarlo):
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 instalar   # o: .\scripts\dev.ps1 instalar
+.\scripts\dev.ps1 admin        # primer administrador (no hay cuentas por defecto)
+.\scripts\dev.ps1 ui           # ventana de escritorio   (web: navegador en http://127.0.0.1:8501)
+.\scripts\dev.ps1 api          # API en http://127.0.0.1:8000/docs      (todo: API + UI)
+.\scripts\dev.ps1 pruebas      # pytest -q          (secretos: revisa que no haya claves en Git)
+```
+Equivalente manual:
 ```bash
 python -m venv .venv
 .venv\Scripts\activate
@@ -48,8 +56,11 @@ python -m scripts.verificar_gemini                  # lista modelos y hace una l
 ## API y dispositivos
 `uvicorn api.main:app --port 8000` → `/docs`. Sin tokens solo acepta localhost. Contrato: `docs/API.md`. ESP32-S3: `firmware/esp32s3_monitor/` (sin compilar); ver `docs/HARDWARE.md`. Cada cisterna usa un token propio: `python -m scripts.registrar_dispositivo CIS-01`.
 
+## Nube: Supabase + Vercel (preparado, sin desplegar)
+Reparto: **Supabase** = PostgreSQL + Storage privado + Auth; **Vercel** = API FastAPI sin estado (`vercel.json`, `pyproject.toml`, `uv.lock`; incluye las terminales ESP32 por HTTPS); **UI Flet** = proceso Python (Windows/Raspberry/otro host) conectado a la misma base, porque Flet necesita una conexión WebSocket persistente con estado en memoria. Si no se define `DATABASE_URL` todo sigue funcionando con SQLite local. Límites verificados de Vercel, riesgos (arranque en frío, Gemini frente al tiempo máximo, conexiones a Postgres, fotos de 4,5 MB), variables por entorno, procedimientos y rollback: **`docs/DESPLIEGUE.md`**. Estado: la configuración se probó con `vercel build` local; **no se ha desplegado ni probado en las plataformas reales**.
+
 ## Variables de entorno
-Prefijo `HIDRO360_` (`HIDRO360_DB`, `HIDRO360_TRACE`, `HIDRO360_MEDIA_DIR`, `HIDRO360_API_TOKEN`, `HIDRO360_DEVICE_TOKEN`) más `AI_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_MAX_REINTENTOS`. Los nombres antiguos `AGUA_CLARA_*` siguen funcionando como alias **obsoletos** (si existen ambos, gana `HIDRO360_*`). Ver `.env.example` y `docs/INSTALACION.md`.
+Prefijo `HIDRO360_` (`HIDRO360_DB`, `HIDRO360_TRACE`, `HIDRO360_MEDIA_DIR`, `HIDRO360_API_TOKEN`, `HIDRO360_DEVICE_TOKEN`) más `AI_PROVIDER`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_TIMEOUT_SECONDS`, `AI_MAX_REINTENTOS` y, para la nube, `HIDRO360_ENV`, `DATABASE_URL`, `HIDRO360_AUTH`, `HIDRO360_STORAGE`, `SUPABASE_*`, `HIDRO360_CORS_ORIGINS` (marcadas como secretas o no en `.env.example`). Las pruebas no leen `.env`. Los nombres antiguos `AGUA_CLARA_*` siguen funcionando como alias **obsoletos** (si existen ambos, gana `HIDRO360_*`). Ver `.env.example` y `docs/INSTALACION.md`.
 
 ## Desplegar en Raspberry Pi (red local)
 ```bash
@@ -60,10 +71,10 @@ journalctl -u hidro360-api -f              # logs
 Panel en `http://<IP-de-la-Raspberry>:8501`, API en `:8000`. **Solo red local: no exponga estos puertos a Internet** (HTTP sin cifrar). Los mapas (OpenStreetMap) necesitan internet en el navegador del cliente. **Sin probar en una Raspberry real ni con systemd**; pasos, firewall y copias en `docs/INSTALACION.md` §9.
 
 ## Mapa del repositorio
-`interface/flet_app/` UI · `services/` lógica de negocio · `api/` FastAPI · `models/` contratos · `data/` SQLite y datos ficticios · `evaluation/` casos e impacto · `scripts/` utilidades · `firmware/`, `deploy/` hardware · `assets/` logo · `LOGO/` logo original y `PROTOTIPO/` referencia visual · `docs/` documentación · **`AGENTS.md`** guía para asistentes y personas · `.claude/skills/` skills de Claude Code.
+`interface/flet_app/` UI · `services/` lógica de negocio · `api/` FastAPI · `models/` contratos · `data/` SQLite y datos ficticios · `evaluation/` casos e impacto · `scripts/` utilidades · `firmware/`, `deploy/` hardware · `vercel.json`/`pyproject.toml`/`uv.lock` despliegue de la API · `scripts/dev.ps1` flujo Windows · `scripts/revisar_secretos.py` · `assets/` logo · `LOGO/` logo original y `PROTOTIPO/` referencia visual · `docs/` documentación · **`AGENTS.md`** guía para asistentes y personas · `.claude/skills/` skills de Claude Code.
 
 ## Documentación
-`AGENTS.md` · `docs/ARQUITECTURA.md` · `INSTALACION.md` · `API.md` · `BASE_DE_DATOS.md` · `SEGURIDAD.md` · `IA_GEMINI.md` · `PRUEBAS.md` · `DECISIONES.md` · `DISENO_UI.md` · `HARDWARE.md` · `PLANIFICADOR.md` · `INVENTARIO_ARCHIVOS.md` · `AUDITORIA_TECNICA.md` (estado inicial) · `GUION_VIDEO.md` · `CHANGELOG.md`.
+`AGENTS.md` · `docs/ARQUITECTURA.md` · `INSTALACION.md` · `DESPLIEGUE.md` · `API.md` · `BASE_DE_DATOS.md` · `SEGURIDAD.md` · `IA_GEMINI.md` · `PRUEBAS.md` · `DECISIONES.md` · `DISENO_UI.md` · `HARDWARE.md` · `PLANIFICADOR.md` · `INVENTARIO_ARCHIVOS.md` · `AUDITORIA_TECNICA.md` (estado inicial) · `GUION_VIDEO.md` · `CHANGELOG.md`.
 
 ## Limitaciones conocidas
 Autenticación de administración en integración (ver `docs/SEGURIDAD.md`); parámetros de prioridad y litros por persona son de demostración; extracción por regex; el plan no modela rutas ni ETA; sectores sin reportes siguen invisibles para la asignación (solo se marcan); el logo es un JPEG sin transparencia.

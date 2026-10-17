@@ -35,10 +35,15 @@ def build(ctx) -> ft.Control:
         comentario = C.campo("Comentario (opcional)", "")
 
         def decidir(es, otro_id=otro.id, com=comentario):
-            ok, _ = ctx.ejecutar(lambda: workflow.resolver_duplicado(r.id, otro_id, es, ctx.responsable, com.value or ""),
-                                 f"#{r.id} marcado como duplicado de #{otro_id}." if es else "Decisión registrada: no son duplicados.")
-            if ok:
-                ctx.refrescar()
+            def hacer():
+                ok, _ = ctx.ejecutar(lambda: workflow.resolver_duplicado(r.id, otro_id, es, ctx.responsable, com.value or ""),
+                                     f"#{r.id} marcado como duplicado de #{otro_id}." if es else "Decisión registrada: no son duplicados.")
+                if ok:
+                    ctx.refrescar()
+            if es:     # excluye el reporte del cálculo de prioridad: se confirma
+                ctx.confirmar("Marcar como duplicado", f"El reporte #{r.id} dejará de contar en la prioridad y quedará agrupado con #{otro_id}. Queda en la auditoría.", hacer)
+            else:
+                hacer()
 
         tarjetas.append(C.panel(ft.Column([
             ft.Row([ft.Text(f"Posible duplicado de #{otro.id}", size=15, weight=ft.FontWeight.W_700, color=T.NAVY),

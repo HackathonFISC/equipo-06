@@ -102,7 +102,13 @@ def _marcado(ex, campo):
 
 def _extraer(texto: str):
     with entorno():
-        return ingest.interpretar(texto, workflow.listar_sectores())
+        # La evaluación debe ser reproducible y no enviar los textos de sus casos a Gemini,
+        # incluso si quien la ejecuta tiene una clave configurada en su .env local.
+        token_local = ingest.solo_local.set(True)
+        try:
+            return ingest.interpretar(texto, workflow.listar_sectores())
+        finally:
+            ingest.solo_local.reset(token_local)
 
 
 # --------------------------------------------------------------- 1-4 comprensión
