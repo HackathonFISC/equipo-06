@@ -9,6 +9,7 @@ import json
 from datetime import datetime
 from typing import Any, Dict, List, Optional
 
+import config
 from data import database as db
 from models.schemas import EntradaAuditoria
 
@@ -21,12 +22,13 @@ def _hash(previo: str, cuerpo: Dict[str, Any]) -> str:
 
 def registrar(responsable: str, accion: str, entidad: str, entidad_id: Any,
               motivo: str = "", detalle: Optional[Dict[str, Any]] = None) -> EntradaAuditoria:
-    previas = db.listar("auditoria")
-    previo = previas[-1]["hash"] if previas else GENESIS
+    ultima = db.ultimo("auditoria")
+    previo = ultima["hash"] if ultima else GENESIS
     cuerpo = {
         "fecha": datetime.now().isoformat(timespec="seconds"),
         "responsable": responsable, "accion": accion, "entidad": entidad,
-        "entidad_id": str(entidad_id), "motivo": motivo, "detalle": detalle or {},
+        "entidad_id": str(entidad_id), "motivo": motivo,
+        "detalle": {"resultado": "ok", "version_reglas": config.VERSION_REGLAS, **(detalle or {})},
     }
     h = _hash(previo, cuerpo)
     nuevo_id = db.insertar("auditoria", {**cuerpo, "hash_previo": previo, "hash": h})

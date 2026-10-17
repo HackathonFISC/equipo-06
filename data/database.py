@@ -7,6 +7,7 @@ fácil de copiar a una Raspberry Pi.
 
 import json
 import sqlite3
+import threading
 from contextlib import contextmanager
 from typing import Any, Dict, Iterator, List, Optional
 
@@ -25,21 +26,60 @@ CREATE TABLE IF NOT EXISTS decisiones_duplicado (
     id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS auditoria (
     id INTEGER PRIMARY KEY AUTOINCREMENT, datos TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS usuarios (
+    id TEXT PRIMARY KEY, datos TEXT NOT NULL);
 """
 
+# `usuarios` NO está aquí: reiniciar la demo no debe borrar las cuentas de administración.
 TABLAS = ["sectores", "cisternas", "reportes", "planes", "decisiones_duplicado", "auditoria"]
+
+
+_local = threading.local()
+
+
+def _abrir() -> sqlite3.Connection:
+    con = sqlite3.connect(str(config.DB_PATH), timeout=15, isolation_level=None)
+    con.row_factory = sqlite3.Row
+    con.executescript(SCHEMA)
+    return con
+
+
+@contextmanager
+def transaccion() -> Iterator[sqlite3.Connection]:
+    """Agrupa varias operaciones (cambio de negocio + auditoría) en UNA transacción atómica.
+    BEGIN IMMEDIATE serializa escritores; si algo falla se revierte todo. Es reentrante."""
+    if getattr(_local, "con", None) is not None:
+        yield _local.con
+        return
+    con = _abrir()
+    _local.con = con
+    try:
+        con.execute("BEGIN IMMEDIATE")
+        yield con
+        con.execute("COMMIT")
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
+        raise
+    finally:
+        _local.con = None
+        con.close()
 
 
 @contextmanager
 def conexion() -> Iterator[sqlite3.Connection]:
-    con = sqlite3.connect(str(config.DB_PATH))
-    con.row_factory = sqlite3.Row
+    activa = getattr(_local, "con", None)
+    if activa is not None:  # dentro de transaccion(): la confirma el contexto externo
+        yield activa
+        return
+    con = _abrir()
     try:
-        con.executescript(SCHEMA)
+        con.execute("BEGIN")
         yield con
-        con.commit()
-    except Exception:
-        con.rollback()
+        con.execute("COMMIT")
+    except BaseException:
+        if con.in_transaction:
+            con.execute("ROLLBACK")
         raise
     finally:
         con.close()
@@ -89,3 +129,9 @@ def vaciar(tablas: Optional[List[str]] = None) -> None:
         for t in tablas or TABLAS:
             con.execute(f"DELETE FROM {t}")
             con.execute("DELETE FROM sqlite_sequence WHERE name = ?", (t,))
+
+
+def ultimo(tabla: str) -> Optional[Dict[str, Any]]:
+    with conexion() as con:
+        fila = con.execute(f"SELECT datos FROM {tabla} ORDER BY id DESC LIMIT 1").fetchone()
+    return json.loads(fila["datos"]) if fila else None

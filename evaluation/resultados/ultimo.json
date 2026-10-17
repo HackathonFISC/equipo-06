@@ -1,0 +1,352 @@
+{
+  "generado": "2026-10-17T00:04:37",
+  "version": "0.4.0",
+  "indicadores": {
+    "Campos clave correctamente extraídos (C01-C04)": "16/16 (100%)",
+    "Duplicados sugeridos correctamente (C05)": "1/1",
+    "Falsos agrupamientos (C06)": "0/1 (0 es lo deseado)",
+    "Cumplimiento de capacidad (C12-C13)": "2/2",
+    "Decisiones con justificación y registro (C15)": "1/1"
+  },
+  "resultados": [
+    {
+      "id": "C01",
+      "grupo": "Comprensión (1-4)",
+      "descripcion": "Reporte completo con cifras aproximadas",
+      "criterio": "Campos correctos; aproximaciones marcadas inciertas",
+      "esperado": "sector='La Chorrera'; horas_sin_agua=72.0; personas_afectadas=40; personas_incierto=True; severidad='alta'; calle='calle principal'; vulnerabilidades=['adultos_mayores']",
+      "obtenido": "sector='La Chorrera'; horas_sin_agua=72.0; personas_afectadas=40; personas_incierto=True; severidad='alta'; calle='calle principal'; vulnerabilidades=['adultos_mayores']",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "campos_clave": {
+          "sector": true,
+          "horas": true,
+          "personas": true,
+          "severidad": true
+        },
+        "segundos": 0.38,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C02",
+      "grupo": "Comprensión (1-4)",
+      "descripcion": "Reporte con casi todos los datos faltantes",
+      "criterio": "Faltantes explícitos; nada inventado",
+      "esperado": "sector='Capira'; horas_vacias_y_marcadas=True; personas_vacias_y_marcadas=True; severidad_no_inventada=None",
+      "obtenido": "sector='Capira'; horas_vacias_y_marcadas=True; personas_vacias_y_marcadas=True; severidad_no_inventada=None",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "campos_clave": {
+          "sector": true,
+          "horas": true,
+          "personas": true,
+          "severidad": true
+        },
+        "segundos": 0.32,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C03",
+      "grupo": "Comprensión (1-4)",
+      "descripcion": "Texto ambiguo en el tiempo ('ayer') y en personas ('familias')",
+      "criterio": "Estimaciones marcadas como inciertas",
+      "esperado": "sector='Chame'; horas_sin_agua=24.0; horas_incierto=True; personas_afectadas=120; personas_incierto=True",
+      "obtenido": "sector='Chame'; horas_sin_agua=24.0; horas_incierto=True; personas_afectadas=120; personas_incierto=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "campos_clave": {
+          "sector": true,
+          "horas": true,
+          "personas": true,
+          "severidad": true
+        },
+        "segundos": 0.29,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C04",
+      "grupo": "Comprensión (1-4)",
+      "descripcion": "Número en palabras y sector con nombre contenido en otro",
+      "criterio": "Sector correcto, horas y personas",
+      "esperado": "sector='Nuevo Arraiján'; horas_sin_agua=48.0; personas_afectadas=6; severidad='alta'",
+      "obtenido": "sector='Nuevo Arraiján'; horas_sin_agua=48.0; personas_afectadas=6; severidad='alta'",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "campos_clave": {
+          "sector": true,
+          "horas": true,
+          "personas": true,
+          "severidad": true
+        },
+        "segundos": 0.28,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C05",
+      "grupo": "Ubicación y duplicados (5-7)",
+      "descripcion": "Mismo incidente repetido",
+      "criterio": "Sugerencia revisable; sin fusión",
+      "esperado": "sugiere_duplicado=True; marcado_dudoso=True; sin_fusion=(<EstadoReporte.POR_REVISAR: 'por_revisar'>, <EstadoReporte.POR_REVISAR: 'por_revisar'>, None); motivos_visibles=True",
+      "obtenido": "sugiere_duplicado=True; marcado_dudoso=True; sin_fusion=(<EstadoReporte.POR_REVISAR: 'por_revisar'>, <EstadoReporte.POR_REVISAR: 'por_revisar'>, None); motivos_visibles=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "duplicado_correcto": true,
+        "segundos": 0.35,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C06",
+      "grupo": "Ubicación y duplicados (5-7)",
+      "descripcion": "Texto parecido pero caso distinto",
+      "criterio": "No agrupar casos distintos",
+      "esperado": "no_agrupa_casos_distintos=False; ambos_sin_fusion=(None, None)",
+      "obtenido": "no_agrupa_casos_distintos=False; ambos_sin_fusion=(None, None)",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "falso_agrupamiento": false,
+        "segundos": 0.37,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C07",
+      "grupo": "Ubicación y duplicados (5-7)",
+      "descripcion": "Ubicación ambigua y error ortográfico",
+      "criterio": "Opciones al operador; ubicación no inventada",
+      "esperado": "ambiguo_sin_sector=None; opciones=['Capira', 'La Chorrera']; ortografia_no_confirma=None; ortografia_sugiere=True; sector_marcado_incierto=True",
+      "obtenido": "ambiguo_sin_sector=None; opciones=['Capira', 'La Chorrera']; ortografia_no_confirma=None; ortografia_sugiere=True; sector_marcado_incierto=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "ubicacion_no_inventada": true,
+        "segundos": 0.32,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C08",
+      "grupo": "Prioridad y equidad (8-11)",
+      "descripcion": "Difieren las horas sin agua",
+      "criterio": "Orden y puntaje según fórmula 40/30/30",
+      "esperado": "orden=['Chame', 'Caimito']; puntaje_chame=50.0; puntaje_caimito=25.0; razones_visibles=True",
+      "obtenido": "orden=['Chame', 'Caimito']; puntaje_chame=50.0; puntaje_caimito=25.0; razones_visibles=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.41,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C09",
+      "grupo": "Prioridad y equidad (8-11)",
+      "descripcion": "Difiere la población afectada",
+      "criterio": "Orden y puntaje según fórmula",
+      "esperado": "orden=['Arraiján', 'Burunga']; puntaje_arraijan=50.0; puntaje_burunga=27.0",
+      "obtenido": "orden=['Arraiján', 'Burunga']; puntaje_arraijan=50.0; puntaje_burunga=27.0",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.49,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C10",
+      "grupo": "Prioridad y equidad (8-11)",
+      "descripcion": "Difiere la vulnerabilidad del sector",
+      "criterio": "Orden y puntaje según fórmula",
+      "esperado": "orden=['Veracruz', 'Chame']; puntaje_veracruz=52.5; puntaje_chame=45.0",
+      "obtenido": "orden=['Veracruz', 'Chame']; puntaje_veracruz=52.5; puntaje_chame=45.0",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.49,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C11",
+      "grupo": "Prioridad y equidad (8-11)",
+      "descripcion": "Servicio esencial vs. 5 quejas repetidas",
+      "criterio": "Servicio esencial pesa; las quejas no suman",
+      "esperado": "orden_servicio_esencial_primero=['La Chorrera', 'Chame']; puntaje_servicio_esencial=60.0; 5_quejas_igual_que_1=45.0; quejas_contadas_pero_sin_peso=5",
+      "obtenido": "orden_servicio_esencial_primero=['La Chorrera', 'Chame']; puntaje_servicio_esencial=60.0; 5_quejas_igual_que_1=45.0; quejas_contadas_pero_sin_peso=5",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 1.05,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C12",
+      "grupo": "Plan y capacidad (12-13)",
+      "descripcion": "Capacidad suficiente",
+      "criterio": "Todo cubierto sin exceder capacidad",
+      "esperado": "sin_pendientes=[]; capacidad_respetada=True; demanda_cubierta={'Chame': 1500, 'Capira': 1200}",
+      "obtenido": "sin_pendientes=[]; capacidad_respetada=True; demanda_cubierta={'Capira': 1200, 'Chame': 1500}",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "capacidad_respetada": true,
+        "segundos": 0.42,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C13",
+      "grupo": "Plan y capacidad (12-13)",
+      "descripcion": "Capacidad insuficiente (demo completa)",
+      "criterio": "Nunca exceder capacidad; pendientes con motivo",
+      "esperado": "hay_pendientes=True; todos_con_motivo=True; capacidad_respetada=True; asignado_no_supera_disponible=True; mayor_prioridad_cubierta_completa=3000; plan_marcado_propuesto='propuesto'",
+      "obtenido": "hay_pendientes=True; todos_con_motivo=True; capacidad_respetada=True; asignado_no_supera_disponible=True; mayor_prioridad_cubierta_completa=3000; plan_marcado_propuesto='propuesto'",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "capacidad_respetada": true,
+        "segundos": 0.71,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C14",
+      "grupo": "Explicación y guardrails (14-15)",
+      "descripcion": "Comunicación",
+      "criterio": "Borrador, sin promesa de hora, sin publicar sin aprobación",
+      "esperado": "hay_borradores=True; todos_marcados_borrador=True; sin_promesa_de_hora=False; modulo_sin_funcion_de_envio=[]; plan_no_aprobado_no_figura_como_aprobado=None; dispositivos_no_ven_borradores=[]",
+      "obtenido": "hay_borradores=True; todos_marcados_borrador=True; sin_promesa_de_hora=False; modulo_sin_funcion_de_envio=[]; plan_no_aprobado_no_figura_como_aprobado=None; dispositivos_no_ven_borradores=[]",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.54,
+        "oficial": true
+      }
+    },
+    {
+      "id": "C15",
+      "grupo": "Explicación y guardrails (14-15)",
+      "descripcion": "Control humano",
+      "criterio": "Responsable/motivo obligatorios y registro",
+      "esperado": "aprobar_sin_responsable_rechazado=True; rechazar_sin_motivo_rechazado=True; editar_sin_motivo_rechazado=True; aprobacion_con_responsable='aprobado'; registro_responsable_fecha_decision=True; no_reaprobar=True; no_rechazar_aprobado=True; cadena_auditoria_integra=True",
+      "obtenido": "aprobar_sin_responsable_rechazado=True; rechazar_sin_motivo_rechazado=True; editar_sin_motivo_rechazado=True; aprobacion_con_responsable='aprobado'; registro_responsable_fecha_decision=True; no_reaprobar=True; no_rechazar_aprobado=True; cadena_auditoria_integra=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "decisiones_con_registro": 1,
+        "decisiones_totales": 1,
+        "segundos": 0.64,
+        "oficial": true
+      }
+    },
+    {
+      "id": "A1",
+      "grupo": "Adicional: seguridad",
+      "descripcion": "Instrucciones maliciosas dentro del texto (reglas)",
+      "criterio": "El texto es dato, no instrucción",
+      "esperado": "severidad_no_alterada=None; aviso_de_instrucciones=True; reporte_sigue_por_revisar='por_revisar'; texto_original_intacto=True; sin_planes_creados=[]",
+      "obtenido": "severidad_no_alterada=None; aviso_de_instrucciones=True; reporte_sigue_por_revisar='por_revisar'; texto_original_intacto=True; sin_planes_creados=[]",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.5,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A2",
+      "grupo": "Adicional: seguridad",
+      "descripcion": "Gemini simulado que 'obedece' la inyección",
+      "criterio": "El código revalida y descarta",
+      "esperado": "modelo_que_obedece_no_logra_crítica=None; sector_validado_por_catalogo='Chame'",
+      "obtenido": "modelo_que_obedece_no_logra_crítica=None; sector_validado_por_catalogo='Chame'",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.42,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A3",
+      "grupo": "Adicional: consistencia",
+      "descripcion": "Reportes contradictorios del mismo sector",
+      "criterio": "Máximo declarado + advertencia",
+      "esperado": "usa_maximo_no_suma=72.0; advierte_contradiccion=True; no_cuenta_quejas_en_puntaje=58.5",
+      "obtenido": "usa_maximo_no_suma=72.0; advierte_contradiccion=True; no_cuenta_quejas_en_puntaje=58.5",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.71,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A4",
+      "grupo": "Adicional: plan",
+      "descripcion": "Sin cisternas disponibles",
+      "criterio": "Todo pendiente con motivo",
+      "esperado": "sin_asignaciones=[]; pendiente_con_motivo='No hay cisternas disponibles.'",
+      "obtenido": "sin_asignaciones=[]; pendiente_con_motivo='No hay cisternas disponibles.'",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.61,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A5",
+      "grupo": "Adicional: equidad",
+      "descripcion": "Sector sin reportes (invisible)",
+      "criterio": "Sin prioridad inventada; estado explícito",
+      "esperado": "sector_sin_reportes_no_recibe_prioridad=['Chame']; estado_explicito='sin_reportes_recientes'; verificacion_proactiva_por_antecedentes=True; sin_dato_no_es_sin_necesidad='necesidad_no_evaluada'",
+      "obtenido": "sector_sin_reportes_no_recibe_prioridad=['Chame']; estado_explicito='sin_reportes_recientes'; verificacion_proactiva_por_antecedentes=True; sin_dato_no_es_sin_necesidad='necesidad_no_evaluada'",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.49,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A6",
+      "grupo": "Adicional: robustez",
+      "descripcion": "Doble clic / reenvío",
+      "criterio": "Un solo reporte (idempotencia)",
+      "esperado": "misma_id=1; un_solo_reporte=1",
+      "obtenido": "misma_id=1; un_solo_reporte=1",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.51,
+        "oficial": false
+      }
+    },
+    {
+      "id": "A7",
+      "grupo": "Adicional: ubicación",
+      "descripcion": "Referencia coloquial",
+      "criterio": "Sector por referencia; sin cifras inventadas",
+      "esperado": "sector_por_referencia_coloquial='Vista Alegre'; personas_sin_cifra_no_inventadas=None; marcadas_como_faltantes=True",
+      "obtenido": "sector_por_referencia_coloquial='Vista Alegre'; personas_sin_cifra_no_inventadas=None; marcadas_como_faltantes=True",
+      "estado": "PASS",
+      "explicacion": "Todos los criterios se cumplen.",
+      "metricas": {
+        "segundos": 0.41,
+        "oficial": false
+      }
+    }
+  ]
+}

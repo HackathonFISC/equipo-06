@@ -4,7 +4,9 @@ Módulo 3 - Priorización (determinista, sin IA).
 puntaje = 100 * (0.40*horas + 0.30*población + 0.30*vulnerabilidad), cada factor en [0,1]:
   horas       = min(horas_sin_agua / 96, 1)
   población   = min(personas_afectadas / 300, 1)
-  vulnerab.   = baja .25 | media .5 | alta .75 | crítica 1
+  vulnerab.   = baja .25 | media .5 | alta .75 | crítica 1 (catálogo del sector), elevada a
+                1.0 si un reporte CONFIRMADO del sector indica servicio esencial afectado y a
+                0.75 si indica personas vulnerables (adultos mayores, niños pequeños, enfermos)
 
 Por sector se toma el MÁXIMO de horas y de personas entre sus reportes activos (no la suma):
 por eso el número de quejas repetidas NO aumenta la prioridad. Un dato faltante aporta 0
@@ -52,6 +54,15 @@ def calcular_prioridades(reportes: List[Reporte], sectores: List[Sector]) -> Lis
         h_norm = min(horas / config.HORAS_TOPE, 1.0) if horas is not None else 0.0
         p_norm = min(personas / config.PERSONAS_TOPE, 1.0) if personas is not None else 0.0
         v_norm = config.VULNERABILIDAD_VALORES.get(sector.vulnerabilidad.value, 0.5)
+        v_expl = f"vulnerabilidad '{sector.vulnerabilidad.value}' según el catálogo"
+        esenciales = sorted({r.servicio_esencial for r in reps if r.servicio_esencial})
+        vulnerables = sorted({v for r in reps for v in r.vulnerabilidades})
+        if esenciales and config.VULN_SERVICIO_ESENCIAL > v_norm:
+            v_norm = config.VULN_SERVICIO_ESENCIAL
+            v_expl = f"servicio esencial confirmado ({', '.join(esenciales)}): vulnerabilidad elevada a {v_norm:g}"
+        elif vulnerables and config.VULN_PERSONAS_VULNERABLES > v_norm:
+            v_norm = config.VULN_PERSONAS_VULNERABLES
+            v_expl = f"personas vulnerables confirmadas ({', '.join(vulnerables)}): vulnerabilidad elevada a {v_norm:g}"
 
         factores = [
             FactorPrioridad(
@@ -67,13 +78,16 @@ def calcular_prioridades(reportes: List[Reporte], sectores: List[Sector]) -> Lis
             FactorPrioridad(
                 nombre="Vulnerabilidad del sector", valor=v_norm, normalizado=round(v_norm, 4),
                 peso=config.PESO_VULNERABILIDAD, contribucion=round(100 * config.PESO_VULNERABILIDAD * v_norm, 2),
-                explicacion=f"vulnerabilidad '{sector.vulnerabilidad.value}' según el catálogo"),
+                explicacion=v_expl),
         ]
         puntaje = round(sum(f.contribucion for f in factores), 2)
 
         razones = [f"{f.nombre}: +{f.contribucion:g} pts ({f.explicacion})" for f in factores]
         if len(reps) > 1:
             razones.append(f"{len(reps)} reportes del sector: se usa el valor máximo, la cantidad de quejas NO suma puntos.")
+        if len(horas_vals) > 1 and max(horas_vals) - min(horas_vals) > 24:
+            razones.append(f"Reportes con horas sin agua contradictorias ({min(horas_vals):g}-{max(horas_vals):g} h): "
+                           "se usa el máximo declarado; verifique con el operador o en terreno.")
         if horas is None or personas is None:
             razones.append("Faltan datos: corrija el reporte para que el puntaje sea completo.")
 

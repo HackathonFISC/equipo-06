@@ -90,7 +90,7 @@ def test_edicion_valida_capacidad_y_aprobacion_audita():
     acciones = [e.accion for e in audit.listar("plan", plan.id)]
     assert acciones == ["generar_plan", "editar_plan", "aprobar_plan"]
     e = audit.listar("plan", plan.id)[1]
-    assert e.responsable == "ana" and e.motivo and "antes" in e.detalle and "despues" in e.detalle
+    assert e.responsable == "servicio:ana" and e.motivo and "antes" in e.detalle and "despues" in e.detalle
     assert audit.verificar_integridad()
 
 
@@ -108,7 +108,8 @@ def test_api_contrato(monkeypatch):
     _confirmar_todos()
     plan = workflow.generar_plan("t")
     workflow.decidir_plan(plan.id, AccionDecision.APROBAR, "t", "")
-    c = TestClient(app)
+    monkeypatch.setenv("AGUA_CLARA_API_TOKEN", "op-test")
+    c = TestClient(app, headers={"X-API-Token": "op-test"})
     est = c.get("/api/v1/estado").json()
     assert est["plan_aprobado"]["id"] == plan.id
     r = c.post("/api/v1/dispositivos/confirmaciones",

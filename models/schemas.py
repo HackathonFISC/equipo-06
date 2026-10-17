@@ -1,5 +1,5 @@
 """
-Contratos de datos estables de Agua Clara AI (Pydantic).
+Contratos de datos estables de HIDRO360 (Pydantic).
 
 Estos modelos son el "contrato" entre la lógica de negocio, la interfaz
 (Streamlit), la API HTTP (FastAPI) y, más adelante, dispositivos externos
@@ -11,9 +11,9 @@ from datetime import datetime
 from enum import Enum
 from typing import Any, Dict, List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION = "1.2"  # 1.2: Reporte.codigo_seguimiento (portal público)
 
 
 class Severidad(str, Enum):
@@ -65,7 +65,11 @@ class Sector(BaseModel):
     vulnerabilidad: Vulnerabilidad = Vulnerabilidad.MEDIA
     lat: Optional[float] = None
     lng: Optional[float] = None
-    alias: List[str] = Field(default_factory=list)
+    alias: List[str] = Field(default_factory=list)          # variantes de nombre
+    referencias: List[str] = Field(default_factory=list)    # referencias coloquiales ("chino de ...")
+    antecedentes_interrupciones: Optional[int] = None       # nº de cortes documentados; None = sin dato
+    fuente_datos: str = "ficticio (demo)"
+    fecha_datos: Optional[str] = None
     ficticio: bool = True
 
 
@@ -75,7 +79,14 @@ class Cisterna(BaseModel):
     litros_disponibles: int = Field(ge=0)
     estado: EstadoCisterna = EstadoCisterna.DISPONIBLE
     sector_base: Optional[str] = None
+    sectores_elegibles: Optional[List[str]] = None  # None = puede ir a cualquier sector
     ficticio: bool = True
+
+    @model_validator(mode="after")
+    def _disponible_no_excede_capacidad(self):
+        if self.litros_disponibles > self.capacidad_litros:
+            raise ValueError("litros_disponibles no puede exceder capacidad_litros")
+        return self
 
 
 # --------------------------------------------------------------------------
@@ -83,7 +94,14 @@ class Cisterna(BaseModel):
 # --------------------------------------------------------------------------
 class Extraccion(BaseModel):
     """Resultado de interpretar el texto. Nunca reemplaza al texto original."""
-    sector: Optional[str] = None
+    sector: Optional[str] = None            # solo si la coincidencia es exacta/alias y no ambigua
+    sector_candidatos: List[Dict[str, Any]] = Field(default_factory=list)  # opciones para el operador
+    referencia_ubicacion: Optional[str] = None
+    tipo_incidencia: Optional[str] = None   # sin_suministro | tuberia_rota | baja_presion | otro
+    vulnerabilidades: List[str] = Field(default_factory=list)
+    servicio_esencial: Optional[str] = None
+    evidencia: Dict[str, str] = Field(default_factory=dict)   # campo -> fragmento literal del mensaje
+    confianza_declarada: Optional[float] = Field(None, ge=0, le=1)  # subjetiva del intérprete; NO calibrada
     calle: Optional[str] = None
     horas_sin_agua: Optional[float] = Field(None, ge=0)
     personas_afectadas: Optional[int] = Field(None, ge=0)
@@ -111,6 +129,18 @@ class Reporte(BaseModel):
     duplicado_de: Optional[int] = None
     confirmado_por: Optional[str] = None
     ficticio: bool = False
+    canal: str = "manual"
+    referencia_ubicacion: Optional[str] = None
+    tipo_incidencia: Optional[str] = None
+    vulnerabilidades: List[str] = Field(default_factory=list)
+    servicio_esencial: Optional[str] = None
+    evidencia: Dict[str, str] = Field(default_factory=dict)
+    confianza_declarada: Optional[float] = None
+    interprete: str = "reglas"
+    sector_candidatos: List[Dict[str, Any]] = Field(default_factory=list)
+    clave_idempotencia: Optional[str] = None
+    motivo_rechazo: Optional[str] = None
+    codigo_seguimiento: Optional[str] = None  # HID-XXXXXXXX; reportes antiguos no lo tienen
 
 
 class CandidatoDuplicado(BaseModel):
@@ -168,6 +198,8 @@ class PropuestaPlan(BaseModel):
     fecha_creacion: datetime
     estado: EstadoPlan = EstadoPlan.PROPUESTO
     litros_por_persona: int
+    metodo: str = "flujo_maximo_lexicografico"
+    version_reglas: str = ""
     asignaciones: List[Asignacion]
     pendientes: List[SectorPendiente]
     prioridades: List[PrioridadSector]
@@ -208,6 +240,9 @@ class EstadoActual(BaseModel):
     plan_aprobado: Optional[PropuestaPlan] = None
     plan_pendiente_de_revision: Optional[PropuestaPlan] = None
     reportes_activos: int = 0
+    reportes_por_revisar: int = 0
+    prioridades_top: List[Dict[str, Any]] = Field(default_factory=list)
+    sectores_sin_informacion: int = 0
     cisternas: List[Cisterna] = Field(default_factory=list)
 
 

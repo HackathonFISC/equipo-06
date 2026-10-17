@@ -50,3 +50,20 @@ cisternas.json
 # OS
 .DS_Store
 Thumbs.db
+
+# Secretos y configuracion local
+.env
+.env.*
+!.env.example
+!deploy/raspberry/.env.example
+firmware/**/config_dispositivo.h
+
+# Trazas y datos locales
+logs/
+*.jsonl
+!evaluation/**/*.jsonl
+demo_visual*
+backups/
+
+# Paquete de librerias del fabricante (354 MB; se copia a Documents/Arduino/libraries)
+PANTALLA_DE_MONITOREO/libraries/

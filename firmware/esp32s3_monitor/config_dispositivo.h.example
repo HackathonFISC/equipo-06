@@ -1,0 +1,12 @@
+// HIDRO360 - configuracion del tablero ESP32-S3.
+// Copie este archivo a config_dispositivo.h y complete sus valores. config_dispositivo.h NO se versiona.
+#pragma once
+#define WIFI_SSID      "NOMBRE_DE_SU_WIFI"
+#define WIFI_PASSWORD  "CLAVE_DE_SU_WIFI"
+// IP de la Raspberry Pi (o PC) que ejecuta la API. HTTP en red local de confianza.
+#define API_BASE_URL   "http://192.168.1.50:8000"
+// Debe coincidir con AGUA_CLARA_DEVICE_TOKEN en el servidor (token de DISPOSITIVO, NO el del operador: solo lectura de /estado y confirmaciones).
+#define API_TOKEN      "CAMBIE_ESTE_TOKEN"
+#define DEVICE_ID      "hidro360-pantalla-01"
+#define POLL_MS        15000
+#define HTTP_TIMEOUT_MS 6000

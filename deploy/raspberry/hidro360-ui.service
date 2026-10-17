@@ -1,0 +1,18 @@
+[Unit]
+Description=HIDRO360 - Panel Flet (modo web)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+User=hidro360
+WorkingDirectory=/opt/hidro360
+EnvironmentFile=/etc/hidro360/hidro360.env
+ExecStart=/opt/hidro360/.venv/bin/python app.py --web --host 0.0.0.0 --port 8501 --sin-navegador
+Restart=on-failure
+RestartSec=5
+NoNewPrivileges=true
+ProtectSystem=full
+ReadWritePaths=/var/lib/hidro360
+
+[Install]
+WantedBy=multi-user.target
