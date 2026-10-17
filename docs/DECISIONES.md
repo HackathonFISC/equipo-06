@@ -1,5 +1,7 @@
 # Decisiones técnicas (2026-10-16)
 
+> **Nota de documentación (17-oct-2026):** las decisiones que citan `interface/streamlit_app.py`, `interface/estilos.py` o `tests/test_ui.py` son históricas: esa interfaz se sustituyó por Flet y esos archivos ya no existen.
+
 > Nombre oficial del producto: **HIDRO360** (TEAM VIFY AI); ver D-02.
 
 ## D-01 Migrar de Streamlit a Flet — **adoptada**

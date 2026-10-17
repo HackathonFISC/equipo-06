@@ -60,7 +60,7 @@ Sesiones (`sesiones`), bloqueos (`sesiones`, prefijo `bloqueo:`), límites de ta
 - Sesiones, bloqueos y límites **persisten en la base** (ya no en memoria); consecuencias: cada petición de terminal/pública/login añade una escritura de límite, y los eventos viejos se purgan de forma oportunista (`limpiar_limites`).
 - El bloqueo por usuario permite bloquear a propósito a un administrador (denegación de servicio dirigida). Tras un proxy no declarado como de confianza, el límite por IP agrupa a todos los clientes bajo la IP del proxy.
 - **Sin HTTPS propio**: contraseñas, tokens y sesiones viajan en claro en la red local. Úsese solo en una red de confianza o detrás de un proxy TLS.
-- Sin recuperación de contraseña, sin MFA, sin gestión de cuentas desde la interfaz (solo por línea de comandos).
+- Sin recuperación de contraseña ni MFA. Las cuentas se gestionan desde el panel «Usuarios» (solo administradores) o por línea de comandos.
 - Si dos ciudadanos envían exactamente el mismo texto en 30 s, la idempotencia devuelve el mismo reporte y el mismo código.
 - No se ha realizado una auditoría de seguridad externa ni pruebas de penetración: no afirme que el acceso es «a prueba de ataques»; afirme lo que las pruebas demuestran.
 - Datos personales: la demo usa datos ficticios; con datos reales defina retención y revise las condiciones de Google si usa Gemini.

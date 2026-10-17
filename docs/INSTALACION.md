@@ -93,9 +93,11 @@ Cierre la ventana (o `Ctrl+C` en la terminal). Si la ventana no aparece en la pr
 | «Transición no permitida» | El reporte/plan ya está en un estado final (rechazado, duplicado, aprobado…). |
 
 ## 9. Despliegue en Raspberry Pi (servidor en la red local)
-> **Estado:** los scripts y las unidades systemd están escritos y se validaron solo con `bash -n`, con una resolución de dependencias para aarch64/Python 3.11 (`pip download --platform manylinux2014_aarch64`) y con una ejecución real de `backup.sh` en Windows (Git Bash). **No se han probado en una Raspberry ni con systemd real.** Pruebe primero en una tarjeta de pruebas y corrija lo que falle.
+> **Estado:** el equipo ejecutó `install.sh` en una Raspberry Pi (Raspberry Pi OS Lite 64-bit, Python 3.13): las unidades `hidro360-api` y `hidro360-ui` quedaron activas y `healthcheck.sh` informó **API ok** y **Panel ok** **después de un ajuste manual** (ver «Panel con error 500» más abajo). Las copias de seguridad y el resto de scripts no se probaron en la Pi.
+>
+> **Panel con error 500 («Web root path not found: …/flet_web/web»):** en esa instalación `pip` descargó un `flet_web-1.0.4` de **25 kB**, sin la carpeta `web`, mientras que el wheel oficial de PyPI pesa **27,3 MB** y sí la incluye (comprobado en Windows: 85 archivos, idénticos por SHA-256 a los del wheel oficial). Causa **probable, no confirmada**: el índice `piwheels` que Raspberry Pi OS añade por defecto sirvió un wheel recortado. Solución **verificada** (copiar la carpeta desde un venv de Windows y dar lectura al usuario del servicio): `scp -r .venv\Lib\site-packageslet_web\web USUARIO@PI:/tmp/flet_web_web`, luego en la Pi `sudo cp -r /tmp/flet_web_web /opt/hidro360/.venv/lib/python3.13/site-packages/flet_web/web`, `sudo chmod -R a+rX` sobre esa carpeta y `sudo systemctl restart hidro360-ui`. Alternativa **sin probar**: reinstalar solo desde PyPI con `pip install --force-reinstall --no-cache-dir --index-url https://pypi.org/simple flet-web==1.0.4`. Si `pip check` se queja de `websockets`, ya está fijado en `requirements-servidor.txt` (`>=13,<17`).
 
-Requisitos: Raspberry Pi 4, Raspberry Pi OS **64-bit** (Bookworm, Python 3.11), red local, acceso `sudo`. El servidor usa `requirements-servidor.txt` (flet, flet-web, flet-map, google-genai, pydantic, fastapi, uvicorn): **sin** `flet-desktop` (ventana nativa, innecesaria) **ni** pytest.
+Requisitos: Raspberry Pi 4, Raspberry Pi OS **64-bit** (probado con Python 3.13; Bookworm trae 3.11), red local, acceso `sudo`. El servidor usa `requirements-servidor.txt` (flet, flet-web, flet-map, google-genai, pydantic, fastapi, uvicorn): **sin** `flet-desktop` (ventana nativa, innecesaria) **ni** pytest.
 
 ### 9.1 Instalar
 ```bash

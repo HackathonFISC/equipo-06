@@ -135,7 +135,7 @@ Lo que se examinó (no se dispone del ZIP original):
 **Carpeta `PANTALLA_DE_MONITOREO` (resuelta, ver `docs/DECISIONES.md` D-05):** era el espacio de trabajo de Arduino. Su `libraries/` (354 MB) era idéntica por SHA-256 (5564 archivos) a `Documentos/Arduino/libraries` y se eliminó; su sketch de prueba del LED RGB se conservó en `firmware/pruebas/led_rgb/led_rgb.ino`. El firmware del tablero está en `firmware/esp32s3_monitor/`.
 
 ## 9. Raspberry Pi 4 (Raspberry Pi OS Lite)
-Archivos en `deploy/raspberry/`: `install.sh`, `hidro360-api.service`, `hidro360-ui.service`, `backup.sh`, `healthcheck.sh`, `.env.example`. **Sin probar en una Pi.** (Antes `agua-clara-*.service`; renombrados a HIDRO360.)
+Archivos en `deploy/raspberry/`: `install.sh`, `hidro360-api.service`, `hidro360-ui.service`, `backup.sh`, `healthcheck.sh`, `.env.example`. **Probado por el equipo en una Raspberry Pi (Raspberry Pi OS Lite 64-bit):** los servicios arrancaron y `healthcheck.sh` informó API y panel correctos. Para el panel hizo falta un ajuste manual (ver `docs/INSTALACION.md`, «Raspberry»). (Antes `agua-clara-*.service`; renombrados a HIDRO360.)
 ```bash
 sudo apt update && sudo apt install -y git python3-venv python3-pip
 git clone <repo> /opt/hidro360 && cd /opt/hidro360

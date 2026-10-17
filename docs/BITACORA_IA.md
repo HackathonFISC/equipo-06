@@ -1,5 +1,7 @@
 # Bitácora de uso de IA — HIDRA — Reto 01 (HIDRO360)
 
+> **Nota de documentación (17-oct-2026):** este registro es histórico. Algunos archivos que cita (`docs/AUDITORIA_TECNICA.md`, `docs/INVENTARIO_ARCHIVOS.md`, `docs/INVENTARIO_TECNICO.md`, `docs/GUION_VIDEO.md`, `docs/IMPLEMENTACIONES_EJEMPLO.md`) se retiraron en una limpieza posterior; su contenido sigue en el historial de Git.
+
 > **Qué es este documento.** Registra **cómo se usó IA** para construir y revisar HIDRO360, qué produjo, quién lo revisó y con qué prueba se aceptó. No es un registro de conversaciones ni una lista de «cosas que la IA hizo sola»: la IA propone, una persona revisa y aprueba.
 >
 > **Procedencia de cada entrada.** Las entradas anteriores al **2026-10-17 (revisión de entrega)** están **reconstruidas a partir de evidencia del propio repositorio** (mensajes de commit, `CHANGELOG.md`, `docs/DECISIONES.md` y los archivos afectados). La herramienta de IA exacta de esas entradas tempranas **no quedó registrada** y se marca como *no registrada*. Las entradas de la revisión de entrega corresponden a trabajo observado en la sesión de consolidación. **No se inventan conversaciones ni resultados de prueba.**

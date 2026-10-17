@@ -1,5 +1,16 @@
 # Changelog
 
+
+## Sin versión — 2026-10-17 (demostración local, asistente, bot y administradores)
+### Añadido
+- `scripts/demo_local.ps1`: arranque de la demostración con SQLite forzado (`HIDRO360_BD=sqlite`) y opciones `-CrearAdmin`, `-RestablecerAdmin`, `-ListarAdmins` y `-Bot`.
+- Pantalla «Asistente» (reglas locales y, con `GEMINI_API_KEY`, Gemini con herramientas validadas; guardar un reporte exige confirmación).
+- `scripts/bot_telegram.py`: bot de Telegram por sondeo con flujo guiado (probado solo con simulaciones).
+- Salud: `/api/v1/salud` comprueba la base de verdad (503 si no responde); la interfaz y la API no arrancan en producción sin `DATABASE_URL`.
+### Cambiado
+- `scripts/crear_admin` ya no reemplaza cuentas existentes salvo `--restablecer`.
+- README reescrito con el estado verificado; documentación de la Raspberry actualizada con lo que se probó.
+
 ## 0.6.2 — 2026-10-17 (limpieza física del repositorio y reorganización)
 ### Retirado
 - **`IMPLEMENTACIONES_EJEMPLO/`** completo (laboratorio de IA «Agua Clara AI», 45 archivos): prototipo no integrado; **borrado del disco y de Git**. La decisión pasó de «documentar, no integrar» a **eliminar**, al confirmarse que no se importa ni se ejecuta en el producto.
