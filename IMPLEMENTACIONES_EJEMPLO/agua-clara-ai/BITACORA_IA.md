@@ -1,6 +1,6 @@
 # Bitácora de IA
 
-**Equipo:** Team VIFY AI (Frida Leis · Yohany Kavacila · Victor Montes)  
+**Equipo:** Team VIFY AI (Frida Leis · Yohany Kavacila · Victor Montes)
 **Requisito del reto:** Documentar qué partes se hicieron con IA, con qué herramienta y qué se modificó a mano.
 
 ## Propósito
@@ -34,5 +34,5 @@ Esta bitácora cumple el entregable obligatorio "Bitácora de IA" del reto.
 ## Declaración
 La IA asistió en la codificación y documentación. Toda lógica crítica (auditoría, sesgo de visibilidad, métricas post-plan, revalidación de ediciones) fue **revisada, testeada y corregida a mano** hasta obtener **20/20** en evals y flujo demo verificado de punta a punta.
 
-**Fecha:** 16 de octubre de 2026  
+**Fecha:** 16 de octubre de 2026
 **Equipo:** Team VIFY AI
