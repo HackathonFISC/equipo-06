@@ -99,3 +99,14 @@ def registrar_evento_limite(clave: str, ventana_s: int) -> int:
 def limpiar_limites(antes_s: int = 86400) -> int:
     """Borra los eventos de límite con más de `antes_s` segundos. Devuelve cuántos borró."""
     return _motor().limpiar_limites(antes_s)
+
+
+def comprobar() -> bool:
+    """True si la base responde a una consulta trivial. Lo usa /salud: leer la configuración no prueba que la base
+    exista ni que las credenciales sean válidas. No expone el motivo del fallo (puede contener datos de conexión)."""
+    try:
+        with conexion() as con:
+            con.execute("SELECT 1")
+        return True
+    except Exception:
+        return False

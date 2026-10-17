@@ -35,6 +35,7 @@ from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
+from data import database as db
 from models.schemas import (AccionDecision, Asignacion, Cisterna, ConfirmacionDispositivo, Dispositivo,
                             EstadoActual, Mision, Parada, PropuestaPlan, RegistroEvento, Reporte, SCHEMA_VERSION)
 from services import audit, auth, limites, tracing, workflow
@@ -475,13 +476,16 @@ def _doble(metodo: str, ruta: str, alias: str, **kw):
 
 @app.get("/api/v1/salud")
 def salud():
-    """Sin secretos ni URLs: solo modos de funcionamiento."""
-    return {"ok": True, "schema_version": SCHEMA_VERSION, "version": config.APP_VERSION,
-            "proveedor_ia": config.ai_provider(),
-            "persistencia": "postgres" if config.modo_postgres() else "sqlite",
-            "autenticacion": "supabase" if config.AUTH_BACKEND() == "supabase" else "local",
-            "almacenamiento_fotos": "supabase" if config.STORAGE_BACKEND() == "supabase" else "local",
-            "protocolo_terminal": PROTOCOLO_TERMINAL}
+    """Sin secretos ni URLs. Comprueba la base de verdad: si no responde devuelve 503 y NO declara persistencia
+    funcional (antes informaba «postgres» solo por leer la configuración)."""
+    funcional = db.comprobar()
+    cuerpo = {"ok": funcional, "schema_version": SCHEMA_VERSION, "version": config.APP_VERSION,
+              "proveedor_ia": config.ai_provider(),
+              "persistencia": ("postgres" if config.modo_postgres() else "sqlite") if funcional else "no_disponible",
+              "autenticacion": "supabase" if config.AUTH_BACKEND() == "supabase" else "local",
+              "almacenamiento_fotos": "supabase" if config.STORAGE_BACKEND() == "supabase" else "local",
+              "protocolo_terminal": PROTOCOLO_TERMINAL}
+    return JSONResponse(cuerpo, status_code=200 if funcional else 503)
 
 
 # --- autenticación
