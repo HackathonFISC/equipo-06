@@ -21,7 +21,7 @@ Garantías:
 import time
 from contextlib import contextmanager
 from contextvars import ContextVar
-from typing import Iterator, List, Optional, Tuple
+from typing import Any, Callable, Dict, Iterator, List, Optional, Tuple
 
 import config
 from services import tracing
@@ -183,3 +183,62 @@ def listar_modelos() -> List[str]:
         if not acciones or "generateContent" in acciones:
             salida.append((getattr(m, "name", "") or "").replace("models/", ""))
     return sorted(salida)
+
+
+def conversar(sistema: str, pregunta: str, declaraciones: List[Dict[str, Any]], ejecutor: Callable[[str, Dict[str, Any]], Dict[str, Any]],
+              max_iter: int = 3) -> Tuple[str, List[str]]:
+    """Bucle de llamadas a herramientas (function calling). Devuelve (texto final, nombres de herramientas ejecutadas).
+
+    `ejecutor(nombre, argumentos) -> dict` lo proporciona el orquestador: valida y ejecuta la herramienta autorizada.
+    El modelo solo PUEDE pedir herramientas de `declaraciones`; nunca ejecuta nada por sí mismo.
+    Límites: `max_iter` rondas de herramientas y el presupuesto de tiempo de la petición."""
+    global _fallos_seguidos
+    if time.monotonic() < _suspendido_hasta:
+        raise ErrorIA(f"Gemini suspendido temporalmente ({_motivo_suspension})")
+    cliente, types = _cliente()
+    modelo = config.GEMINI_MODEL()
+    herramientas = [types.Tool(function_declarations=[
+        types.FunctionDeclaration(name=d["name"], description=d["description"], parameters=d["parameters"])
+        for d in declaraciones])]
+    contenido = [types.Content(role="user", parts=[types.Part(text=pregunta)])]
+    ejecutadas: List[str] = []
+    with tracing.traza("ia", "gemini.herramientas", {"modelo": modelo, "caracteres_entrada": len(pregunta)},
+                       tools=["google-genai"]) as t:
+        t["detalle"] = {"proveedor": "gemini", "modelo": modelo, "esquema_salida": "herramientas/1"}
+        try:
+            for _ in range(max(1, max_iter)):
+                r = cliente.models.generate_content(
+                    model=modelo, contents=contenido,
+                    config=types.GenerateContentConfig(system_instruction=sistema, temperature=0.2, tools=herramientas))
+                if not r.candidates or r.candidates[0].content is None:
+                    raise ErrorIA("Respuesta vacía del proveedor")
+                parte_modelo = r.candidates[0].content
+                llamadas = [p.function_call for p in (parte_modelo.parts or []) if getattr(p, "function_call", None)]
+                if not llamadas:
+                    texto = r.text or ""
+                    if not texto.strip():
+                        raise ErrorIA("Respuesta vacía del proveedor")
+                    _fallos_seguidos = 0
+                    t["output"] = {"herramientas": len(ejecutadas), **_uso(r)}
+                    return texto, ejecutadas
+                contenido.append(parte_modelo)
+                respuestas = []
+                for fc in llamadas:
+                    resultado = ejecutor(fc.name, dict(fc.args or {}))
+                    ejecutadas.append(fc.name)
+                    respuestas.append(types.Part.from_function_response(name=fc.name, response=resultado))
+                contenido.append(types.Content(role="user", parts=respuestas))
+            raise ErrorIA("La consulta necesitó demasiados pasos; formule una pregunta más concreta.")
+        except ErrorIA:
+            t["status"] = "error"
+            raise
+        except Exception as e:  # SDK o red
+            codigo, _ = _clasificar(e)
+            if codigo == 429:
+                _suspender(60, "cuota o límite de uso agotado (429)")
+            elif codigo in (401, 403):
+                _suspender(900, "credenciales rechazadas (401/403)")
+            _fallos_seguidos += 1
+            t["status"] = "error"
+            t["output"] = {"error_tipo": type(e).__name__, "http": codigo}
+            raise ErrorIA(f"Gemini falló ({type(e).__name__}{f' HTTP {codigo}' if codigo else ''})") from None

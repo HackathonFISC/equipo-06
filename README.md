@@ -115,6 +115,25 @@ python -m scripts.verificar_gemini                  # lista modelos y hace una l
 
 `AI_PROVIDER=auto` (defecto) usa Gemini solo si hay clave; `local` fuerza reglas. Si Gemini falla se usa el modo local y se declara como `reglas(fallback)`.
 
+## Demostración local (SQLite, sin Supabase)
+
+El lanzador `scripts/demo_local.ps1` fuerza SQLite aunque `.env` tenga una `DATABASE_URL` de Supabase. Los datos quedan en
+`datos_demo\hidro360_demo.db` (ignorado por Git). Abra PowerShell en la carpeta del proyecto:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/demo_local.ps1 -CrearAdmin    # primer administrador (clave oculta)
+powershell -ExecutionPolicy Bypass -File scripts/demo_local.ps1 -ListarAdmins  # comprueba que se guardó (sin claves)
+powershell -ExecutionPolicy Bypass -File scripts/demo_local.ps1                # inicia HIDRO360 y muestra la URL
+powershell -ExecutionPolicy Bypass -File scripts/demo_local.ps1 -Bot           # (otra terminal) bot de Telegram
+```
+
+- `-CrearAdmin` **no reemplaza** cuentas existentes; para cambiar una clave use `-RestablecerAdmin`. Después, en el panel
+  (menú *Usuarios*) los administradores pueden crear más cuentas.
+- Si el puerto 8501 está ocupado, el lanzador usa el siguiente y muestra la URL; no detiene procesos ajenos.
+- **Claves** (en `.env`, que está en `.gitignore`; use `.env.example` como guía): `GEMINI_API_KEY` (https://aistudio.google.com/apikey)
+  y `TELEGRAM_BOT_TOKEN` (BotFather → `/newbot`, o `/revoke` si se expuso). Solo para esa terminal:
+  `$env:GEMINI_API_KEY = "..."`. Sin ellas la plataforma funciona; el asistente usa reglas locales.
+
 ## Evals
 
 | Comando | Qué mide | Tipo |

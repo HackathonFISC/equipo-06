@@ -3,9 +3,13 @@
 # - Guarda los reportes en datos_demo\hidro360_demo.db (archivo nuevo; no toca agua_clara.db).
 # - Si el puerto está ocupado, usa el siguiente libre. NUNCA detiene procesos ajenos.
 #
-# Uso:  powershell -ExecutionPolicy Bypass -File scripts\demo_local.ps1 [-Puerto 8501]
+# Uso:  powershell -ExecutionPolicy Bypass -File scripts/demo_local.ps1 [-Puerto 8501]
+#       ... -CrearAdmin     crea una cuenta de administración en la base de demostración (pide la contraseña sin mostrarla)
+#       ... -RestablecerAdmin   cambia la contraseña de una cuenta existente
+#       ... -Bot            inicia el bot de Telegram (otra terminal) con la MISMA base SQLite de la demostración
+#       ... -ListarAdmins   muestra usuario, rol y estado de las cuentas guardadas (nunca contraseñas)
 
-param([int]$Puerto = 8501)
+param([int]$Puerto = 8501, [switch]$CrearAdmin, [switch]$RestablecerAdmin, [switch]$ListarAdmins, [switch]$Bot)
 
 $raiz = Split-Path -Parent $PSScriptRoot
 $python = Join-Path $raiz ".venv\Scripts\python.exe"
@@ -23,6 +27,26 @@ $env:HIDRO360_ENV = "dev"
 $env:HIDRO360_DB = Join-Path $carpeta "hidro360_demo.db"
 $env:DATABASE_URL = ""
 $env:HIDRO360_TRACE = Join-Path $carpeta "trazas_demo.jsonl"   # trazas a archivo (no a la consola)
+
+Set-Location $raiz
+if ($CrearAdmin) {
+    # Mismo entorno que la demo: la cuenta queda en datos_demo\hidro360_demo.db, nunca en Supabase.
+    & $python -m scripts.crear_admin
+    exit $LASTEXITCODE
+}
+if ($RestablecerAdmin) {
+    # Cambia la contraseña de una cuenta que YA existe (CrearAdmin nunca reemplaza cuentas).
+    & $python -m scripts.crear_admin --restablecer
+    exit $LASTEXITCODE
+}
+if ($Bot) {
+    & $python -m scripts.bot_telegram
+    exit $LASTEXITCODE
+}
+if ($ListarAdmins) {
+    & $python -c "from services import auth; [print(u['usuario'], '|', u['rol'], '|', 'activo' if u.get('activo', True) else 'desactivado') for u in auth.listar_usuarios()] or print('Sin cuentas: use -CrearAdmin')"
+    exit $LASTEXITCODE
+}
 
 function Puerto-Libre([int]$p) {
     return -not (Get-NetTCPConnection -LocalPort $p -State Listen -ErrorAction SilentlyContinue)

@@ -25,10 +25,16 @@ sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 from services import auth  # noqa: E402
 
 
+def cuenta_existe(usuario: str) -> bool:
+    return usuario.strip().lower() in {u["usuario"] for u in auth.listar_usuarios()}
+
+
 def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--usuario", help="nombre de usuario (si se omite, se pregunta)")
     ap.add_argument("--rol", choices=[r.value for r in auth.Rol], default=auth.Rol.ADMIN.value)
+    ap.add_argument("--restablecer", action="store_true",
+                    help="permite cambiar la contraseña de una cuenta que YA existe (sin esta opción no se reemplaza nada)")
     ap.add_argument("--supabase-email", help="correo de la cuenta de Supabase a la que se concede el rol")
     a = ap.parse_args()
     if a.supabase_email:
@@ -41,6 +47,9 @@ def main() -> int:
         print(f"Perfil «{doc['usuario']}» creado con rol {a.rol}. Se vinculará a su cuenta de Supabase en el primer acceso.")
         return 0
     usuario = (a.usuario or input("Usuario: ")).strip()
+    if cuenta_existe(usuario) and not a.restablecer:
+        print(f"La cuenta «{usuario.lower()}» ya existe y no se reemplaza. Para cambiar su contraseña use --restablecer.")
+        return 1
     clave = getpass.getpass("Contraseña: ")
     if clave != getpass.getpass("Repita la contraseña: "):
         print("Las contraseñas no coinciden.")
@@ -50,7 +59,7 @@ def main() -> int:
     except ValueError as e:
         print(f"No se creó la cuenta: {e}")
         return 1
-    print(f"Cuenta «{usuario.lower()}» creada con rol {a.rol}.")
+    print(f"Cuenta «{usuario.lower()}» {'restablecida' if a.restablecer else 'creada'} con rol {a.rol}.")
     return 0
 
 

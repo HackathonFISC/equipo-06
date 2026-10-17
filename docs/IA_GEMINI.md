@@ -125,3 +125,18 @@ API: `GET /api/v1/reportes/{id}/contexto?usar_ia=true` y `GET /api/v1/patrones?v
 
 ## Observabilidad
 Cada llamada deja `ia/gemini.<tarea>` con modelo, versión del esquema de salida (`esquema_salida`: `SalidaIA/2`, `SalidaRecomendacion/1`, `texto/1`), estado, duración, intentos, tokens (`uso: {entrada, salida, total}`) si el SDK los informa y, en errores, solo el tipo de excepción y el código HTTP. **No** incluyen texto del ciudadano, teléfonos/correos, claves ni imágenes (prueba: `test_trazas_con_modelo_esquema_tokens_y_sin_fugas`; con el servicio real se comprobó además que la clave, un teléfono y un correo de prueba no aparecen en las trazas ni en la base). En Vercel las trazas salen por stdout (ver `services/tracing.py`).
+
+## Asistente con herramientas y bot de Telegram en local (demostración)
+
+- **Variables** (nombres, sin valores): `GEMINI_API_KEY` (clave de Google AI Studio), `GEMINI_MODEL`, `AI_PROVIDER`,
+  `TELEGRAM_BOT_TOKEN` (token de BotFather), `HIDRO360_BD=sqlite` (forza SQLite en la demostración).
+- **Herramientas que puede invocar Gemini** (`services/asistente_ia.py`, solo funciones de `services/workflow`):
+  `consultar_reporte` (lectura por código HID-XXXXXXXX), `avisos_publicos` (lectura) y `proponer_reporte`
+  (solo prepara un borrador; **no guarda**). Guardar exige confirmación explícita: `confirmar_reporte`.
+- **Orquestación** (`services/ia_gemini.conversar`): máximo 3 rondas de herramientas; cada llamada se valida
+  (nombre autorizado, argumentos obligatorios, formato del código) antes de ejecutarse. Si Gemini falla, la
+  interfaz y el bot responden con las reglas locales y lo declaran.
+- **Pruebas:** `tests/test_asistente_ia.py` usa Gemini y Telegram SIMULADOS (sin cuota). La verificación con Gemini
+  real se hizo con `python -m scripts.verificar_gemini` y una pregunta que invocó `consultar_reporte`.
+- **Bot de Telegram en local (sondeo):** `python -m scripts.bot_telegram`. No necesita webhook ni dominio.
+  Requiere un token nuevo; el que estuvo en el chat debe revocarse en BotFather.
