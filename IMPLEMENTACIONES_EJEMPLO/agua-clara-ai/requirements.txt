@@ -1,0 +1,16 @@
+# Núcleo de la demo (siempre necesario)
+fastapi>=0.110
+uvicorn>=0.27
+pydantic>=2.0
+python-multipart>=0.0.9   # subida multimodal (multipart/form-data)
+
+# Opcionales (la app degrada con elegancia sin ellos)
+# --- Poseidón: percepción hidráulica pasiva ---
+# numpy>=1.24        # análisis espectral (FFT) y síntesis de muestras; recomendado
+# librosa>=0.10      # decodifica ogg/mp3/m4a de WhatsApp (si no, solo WAV vía `wave`)
+# soundfile>=0.12    # decodificación alternativa de audio
+# openai>=1.0        # visión gpt-4o con response_format=json_object (si no, usa services/llm)
+# supabase>=2.4      # persistencia de lecturas en la nube (si no, usa SQLite)
+# --- Otros ---
+# ortools>=9.8       # solver VRP exacto; si no está, se usa el planificador determinista propio
+# requests>=2.31     # no se usa: las llamadas HTTP van con urllib (sin dependencias)
