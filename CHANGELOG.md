@@ -1,10 +1,25 @@
 # Changelog
 
+## 0.6.2 — 2026-10-17 (limpieza física del repositorio y reorganización)
+### Retirado
+- **`IMPLEMENTACIONES_EJEMPLO/`** completo (laboratorio de IA «Agua Clara AI», 45 archivos): prototipo no integrado; **borrado del disco y de Git**. La decisión pasó de «documentar, no integrar» a **eliminar**, al confirmarse que no se importa ni se ejecuta en el producto.
+- **`docs/IMPLEMENTACIONES_EJEMPLO.md`**, **`docs/AUDITORIA_TECNICA.md`**, **`docs/INVENTARIO_ARCHIVOS.md`**, **`docs/INVENTARIO_TECNICO.md`**: documentación histórica/auditorías previas que citaban carpetas ya inexistentes y no son necesarias para operar, desplegar ni explicar la entrega actual.
+- **`docs/GUION_VIDEO.md`**: guion de un video **no grabado**; la demo viva vigente es `docs/GUIA_DEMO_EN_VIVO.md`.
+- **`data/ENTREGA1.ok`**: marcador de texto de la entrega 1 sin ninguna referencia en código, pruebas ni docs.
+- **`evaluation/resultados/impacto.json`** y **`evaluation/resultados/ultimo.json`**: salidas regenerables de `run_impacto`/`run_cases` que ya **no** se versionan (se regeneran con los comandos); ahora ignoradas por `.gitignore`.
+- **`supabase/.temp/cli-latest`**: caché de la CLI de Supabase (versión), ya cubierta por `.gitignore`.
+- **`.tools/`** (`node_modules` de `embedded-postgres`): borrado **del disco** (antes solo se había retirado del índice); se reinstala con `npm install embedded-postgres --prefix .tools/pgnode`.
+### Cambiado
+- Referencias rotas corregidas: `docs/DECISIONES.md` (D-01 y D-02 apuntaban a `INFO DEL PROYECTO/`, `LOGO/`, `PROTOTIPO/` y al inventario retirado), `docs/DISENO_UI.md`, `docs/BITACORA_IA.md`, `interface/flet_app/theme.py` (citaba `PROTOTIPO/hidro360_prototipo.html`) y `.claude/skills/hidro360-flet-ui/SKILL.md`.
+- `.gitignore`: se añade `evaluation/resultados/*.json` (los JSON de resultados se regeneran, no se versionan; el directorio se recrea en cada ejecución).
+### Conocido
+- Sin cambios de comportamiento: es limpieza de repositorio. `pytest -q` y `python -m evaluation.run_cases` se re-ejecutaron tras la limpieza (ver `docs/PRUEBAS.md` y `docs/RESULTADOS_EVALUACION.md`).
+
 ## 0.6.1 — 2026-10-17 (entrega HIDRA — Reto 01: documentación y limpieza)
 ### Añadido
 - `README.md` reescrito con las secciones de la entrega (equipo, problema, impacto, arquitectura de agentes, tecnologías, instalación, evals, robustez, bitácora, demo, estado Supabase/Vercel/ESP32 y limitaciones). Aclara que **HIDRO360** es el producto y **HIDRA — Reto 01** la entrega.
 - `docs/ARQUITECTURA.md`: **arquitectura de 8 roles** (ingesta; interpretación local/Gemini + fallback; sector y duplicados; priorización determinista; planificador; orquestador de recomendaciones; supervisor humano; terminal ESP32-S3) con entrada/salida/herramientas/autonomía/guardrails/límites/aprobación humana y diagrama Mermaid.
-- `docs/BITACORA_IA.md` (bitácora de uso de IA con tabla de decisiones), `docs/GUIA_DEMO_EN_VIVO.md` (demo de 5–7 min en 8 pasos + plan B offline), `docs/INVENTARIO_TECNICO.md` (inventario con decisiones y evidencia) y `docs/IMPLEMENTACIONES_EJEMPLO.md` (análisis del laboratorio: **documentar, no integrar**).
+- `docs/BITACORA_IA.md` (bitácora de uso de IA con tabla de decisiones) y `docs/GUIA_DEMO_EN_VIVO.md` (demo de 5–7 min en 8 pasos + plan B offline).
 ### Cambiado
 - Estado de **Gemini** reconciliado: verificado contra el servicio real el 2026-10-17 (`docs/IA_GEMINI.md`); se corrigieron las afirmaciones «no probado» en `README.md`, `AGENTS.md` y `docs/PRUEBAS.md`.
 - `docs/PRUEBAS.md` actualizado: 19 archivos de prueba (antes 6) y resultados de la entrega (`pytest`: 638 passed, 46 skipped; `run_cases`: 22 PASS, 0 FAIL).
@@ -49,12 +64,12 @@
 
 ## 0.4.0 — 2026-10-16
 ### Cambiado
-- **Interfaz migrada de Streamlit a Flet 1.0.4** (12 páginas, identidad del prototipo y logo, componentes reutilizables, confirmaciones en acciones sensibles). Streamlit y sus dependencias se retiraron tras verificar la cobertura (`docs/INVENTARIO_ARCHIVOS.md`).
+- **Interfaz migrada de Streamlit a Flet 1.0.4** (12 páginas, identidad del prototipo y logo, componentes reutilizables, confirmaciones en acciones sensibles). Streamlit y sus dependencias se retiraron tras verificar la cobertura (el detalle del inventario se retiró en la limpieza posterior; ver `docs/DECISIONES.md` D-01).
 - **Gemini como proveedor de IA** (`google-genai`): `AI_PROVIDER=auto|local|gemini`, `GEMINI_API_KEY`, `GEMINI_MODEL`; fallback local declarado, corte por cuota, reintento prudente, redacción de teléfonos/correos, `scripts/verificar_gemini`. Se retiraron `INTERPRETE` y `LLM_*`.
 - `config.py` lee `.env` (sin pisar el entorno). `app.py` arranca Flet (`--web` para navegador).
 ### Añadido
 - Resumen explicable y borrador de comunicación asistidos por IA (validados; informativos).
-- `AGENTS.md`, `CLAUDE.md`, 6 skills en `.claude/skills/`, y documentación: `IA_GEMINI`, `DECISIONES`, `DISENO_UI`, `API`, `BASE_DE_DATOS`, `SEGURIDAD`, `INSTALACION`, `PRUEBAS`, `INVENTARIO_ARCHIVOS`.
+- `AGENTS.md`, `CLAUDE.md`, 6 skills en `.claude/skills/`, y documentación: `IA_GEMINI`, `DECISIONES`, `DISENO_UI`, `API`, `BASE_DE_DATOS`, `SEGURIDAD`, `INSTALACION`, `PRUEBAS` (más `INVENTARIO_ARCHIVOS`, retirado en la limpieza de 0.6.2).
 - `tests/test_flet.py` y `tests/test_gemini.py` (el total vigente lo da `pytest -q`).
 ### Retirado
 - `PANTALLA_DE_MONITOREO/` (librerías idénticas por SHA-256 a las de Arduino; el sketch del LED se conservó en `firmware/pruebas/led_rgb/`).

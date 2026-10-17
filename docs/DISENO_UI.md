@@ -1,6 +1,6 @@
 # Diseño de la interfaz: del prototipo HTML a Flet
 
-> Nota: el prototipo HTML original **no está en el repositorio actual** (ver `docs/DECISIONES.md` D-02 y `docs/INVENTARIO_TECNICO.md`). Este documento describe el diseño **a partir del prototipo** y cómo se trasladó a Flet; la referencia visual viva es la propia interfaz (`interface/flet_app/portal/` y `interface/flet_app/admin/`) y el logo en `assets/logo.jpeg`.
+> Nota: el prototipo HTML original **no está en el repositorio actual** (ver `docs/DECISIONES.md` D-02). Este documento describe el diseño **a partir del prototipo** y cómo se trasladó a Flet; la referencia visual viva es la propia interfaz (`interface/flet_app/portal/` y `interface/flet_app/admin/`) y el logo en `assets/logo.jpeg`.
 
 ## Qué era el prototipo (`hidro360_prototipo.html`, 78 KB; no versionado)
 Una sola página **ciudadana/comunitaria** («Hidro360 | Prototipo conceptual para La Chorrera»): barra superior blanca (logo + enlaces Inicio · Alertas · Cisternas · Cómo funciona + botón «Reportar falta de agua»), *hero* degradado azul marino con titular y dos acciones, cuatro tarjetas de cifras (alertas activas, sectores afectados, cisternas en ruta, reportes atendidos), mapa ilustrativo con pines (El Coco, Guadalupe, Barrio Colón, Puerto Caimito), lista de alertas con estado (prioridad alta / en seguimiento), tarjeta «Asistencia inteligente», estado de cisternas, «¿Cómo funciona?» en 3 pasos, y un modal de reporte (sector, tipo de problema, tiempo sin agua, personas, información adicional).

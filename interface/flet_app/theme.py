@@ -1,5 +1,5 @@
-"""Identidad visual de HIDRO360. Paleta y proporciones tomadas de PROTOTIPO/hidro360_prototipo.html
-(variables CSS :root) y del logo (gota azul sobre fondo blanco: se usa SOLO sobre superficies blancas)."""
+"""Identidad visual de HIDRO360. Paleta y proporciones derivadas del prototipo conceptual (no está
+en el repositorio; ver `docs/DISENO_UI.md`) y del logo (gota azul sobre fondo blanco: se usa SOLO sobre superficies blancas)."""
 
 NAVY = "#09265d"
 BLUE = "#087cf0"

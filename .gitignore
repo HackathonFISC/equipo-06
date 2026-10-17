@@ -62,11 +62,10 @@ firmware/**/config_dispositivo.h
 logs/
 *.jsonl
 !evaluation/**/*.jsonl
+# Salidas regenerables de la evaluación (se recrean con run_cases/run_impacto; no se versionan)
+evaluation/resultados/*.json
 demo_visual*
 backups/
-
-# Paquete de librerias del fabricante (354 MB; se copia a Documents/Arduino/libraries)
-PANTALLA_DE_MONITOREO/libraries/
 
 # Fotografías subidas (HIDRO360_MEDIA_DIR; en la Raspberry viven en /var/lib/hidro360/media)
 media/

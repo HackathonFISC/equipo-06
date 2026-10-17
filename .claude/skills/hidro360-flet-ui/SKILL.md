@@ -11,7 +11,7 @@ Versión fijada: **flet 1.0.4** (API distinta de 0.x: `ft.run`, `page.show_dialo
 - `interface/flet_app/main.py` carcasa (barra lateral, barra superior, registro `PAGINAS`) y `run()`.
 - `portal/<modulo>.py` (público) y `admin/<modulo>.py` (administración) exportan `build(ctx) -> ft.Control`. Se registra en `PAGINAS` (clave, etiqueta, icono, módulo).
 - `components.py` componentes (panel, kpi, pill, nota, tabla, barra, boton, campo, lista_desplegable…); `theme.py` paleta; `contexto.py` `Ctx`.
-- Identidad: `PROTOTIPO/hidro360_prototipo.html` (paleta navy `#09265d`, azul `#087cf0`, cian `#15c9e8`, tarjetas redondeadas blancas, hero degradado) y `assets/logo.jpeg` (**JPEG sobre fondo blanco, sin transparencia: úselo solo sobre superficies blancas; no lo edite**). Nombre del producto: «HIDRO360» (constante `config.APP_NAME`).
+- Identidad: la paleta vive en `theme.py` (navy `#09265d`, azul `#087cf0`, cian `#15c9e8`, tarjetas redondeadas blancas, hero degradado; diseño documentado en `docs/DISENO_UI.md`) y el logo en `assets/logo.jpeg` (**JPEG sobre fondo blanco, sin transparencia: úselo solo sobre superficies blancas; no lo edite**). Nombre del producto: «HIDRO360» (constante `config.APP_NAME`).
 
 ## Reglas
 1. **UI sin lógica de negocio**: llamar a `services.workflow` solo mediante `ctx.ejecutar(lambda: workflow.xxx(...), "mensaje de éxito")`; esto traduce `ErrorDeNegocio` en un aviso rojo claro. Nunca SQLite desde una página.
