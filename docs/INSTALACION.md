@@ -1,6 +1,6 @@
 # Instalación, configuración y primera demo (Windows y Raspberry Pi)
 
-Las secciones 1-8 son para Windows (desarrollo y demo local); la **sección 9** es el despliegue en Raspberry Pi. Todo en una terminal, desde la raíz del repositorio. **La demo básica no necesita internet, claves ni hardware** (modo local).
+La API en Vercel + Supabase (nube) se describe en **`docs/DESPLIEGUE.md`**. Las secciones 1-8 son para Windows (desarrollo y demo local); la **sección 9** es el despliegue en Raspberry Pi. Todo en una terminal, desde la raíz del repositorio. **La demo básica no necesita internet, claves ni hardware** (modo local).
 
 ## 1. Requisitos
 Python 3.10+ (probado con 3.14.7). Comprobar: `python --version`.
@@ -15,6 +15,8 @@ python -c "import flet, pydantic, fastapi, google.genai; print('imports ok')"
 `requirements.txt` instala el entorno de desarrollo completo (incluye `flet-desktop` y las pruebas) a partir de `requirements-servidor.txt`, que es lo único que necesita un servidor (sección 9).
 
 **Primera ejecución de escritorio: necesita internet UNA vez.** `flet-desktop` es un paquete pequeño; al primer arranque Flet muestra «Preparing Flet … one-time operation» y descarga su cliente a `%USERPROFILE%\.flet\client\` (se comprobó que esa carpeta se crea). Después funciona sin internet. Para un equipo sin internet, copie esa carpeta `.flet\client` desde otro equipo con la misma versión (no probado).
+
+**Atajo:** `scripts\dev.ps1` automatiza esto (venv, dependencias, `.env` sin pisar, administrador, lanzar API/UI): `.\scripts\dev.ps1 instalar`, `admin`, `ui`, `web`, `api`, `todo`, `pruebas`, `secretos`. Si PowerShell bloquea scripts: `powershell -ExecutionPolicy Bypass -File scripts\dev.ps1 instalar`.
 
 ## 3. Probar el entorno
 ```bash
@@ -50,6 +52,9 @@ Copie `.env.example` a `.env` (`copy .env.example .env`). **No hace falta tocar 
 | `HIDRO360_API_TOKEN` | token de servicio de la API (administración desde otros sistemas) | solo para usar la API desde la red |
 | `HIDRO360_DEVICE_TOKEN` | token de dispositivo **heredado** (pantalla de monitoreo). Las terminales de cisterna usan un token propio por vehículo, creado con `python -m scripts.registrar_dispositivo CIS-01` | no |
 | `HIDRO360_DB`, `HIDRO360_TRACE` | rutas de la base SQLite y de las trazas JSONL | no |
+| `HIDRO360_ENV` | perfil `dev` (defecto) · `test` (no lee `.env`) · `prod` | no |
+| `DATABASE_URL` | **secreta.** PostgreSQL/Supabase en lugar de SQLite (opcional también en la Raspberry); pooler de sesión 5432 para procesos persistentes | no |
+| `HIDRO360_AUTH`, `HIDRO360_STORAGE`, `SUPABASE_*`, `HIDRO360_CORS_ORIGINS` | modo nube (Supabase Auth/Storage). `SUPABASE_SERVICE_ROLE_KEY` y `SUPABASE_JWT_SECRET` son **secretas** | solo en la nube |
 | `HIDRO360_MEDIA_DIR` | carpeta de fotografías de los reportes (la comparten la interfaz y la API; por defecto `media/`) | no |
 
 Los límites de fotos (3 por reporte, 3 MB cada una) son constantes de `config.py`, no variables de entorno.
@@ -146,3 +151,6 @@ Edite `/etc/hidro360/hidro360.env` (`sudo nano`) y reinicie: `sudo systemctl res
 ### 9.7 Limitaciones del despliegue
 - La opción «Evaluación e impacto» del panel regenera archivos en `docs/`, que el servicio no puede escribir (`ProtectSystem=strict`; el código es de solo lectura): ejecute esas evaluaciones en el equipo de desarrollo.
 - Desinstalar: `sudo systemctl disable --now hidro360-api hidro360-ui hidro360-backup.timer` y borre las unidades de `/etc/systemd/system`; los datos de `/var/lib/hidro360` no se tocan.
+
+### 9.8 Raspberry con Supabase (opcional)
+La Raspberry puede usar la base de Supabase en lugar de SQLite: añada `DATABASE_URL` (pooler de sesión, 5432) y las variables `HIDRO360_STORAGE`/`SUPABASE_*` a `/etc/hidro360/hidro360.env` y reinicie los servicios. Sin `DATABASE_URL` nada cambia (SQLite en `/var/lib/hidro360/db`). El instalador sigue generando el archivo desde `.env.example` (todas las variables de nube están comentadas). Esta combinación **no se ha probado**. Las copias de `backup.sh` cubren solo SQLite y fotos locales.

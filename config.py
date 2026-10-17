@@ -4,6 +4,7 @@ Todo es local: sin internet, sin claves, sin hardware.
 """
 
 import os
+import sys
 from pathlib import Path
 
 BASE_DIR = Path(__file__).parent
@@ -12,6 +13,10 @@ BASE_DIR = Path(__file__).parent
 def _cargar_dotenv(ruta: Path) -> None:
     """Carga KEY=VALUE de .env SIN pisar variables ya definidas en el entorno (sin dependencias).
     .env está en .gitignore: ahí van GEMINI_API_KEY y los tokens, nunca en el código."""
+    # Las pruebas NUNCA leen .env (podria apuntar a una base o a claves reales): se exportan a mano en el
+    # entorno del proceso cuando se quiere una prueba real. HIDRO360_ENV=test cubre los subprocesos de prueba.
+    if "pytest" in sys.modules or os.environ.get("HIDRO360_ENV", "").strip().lower() == "test":
+        return
     if not ruta.is_file():
         return
     for linea in ruta.read_text(encoding="utf-8").splitlines():
@@ -64,8 +69,11 @@ VULN_PERSONAS_VULNERABLES = 0.75  # adultos mayores, niños pequeños, enfermos 
 # Fotografías subidas: fuera del código y de Git. En la Raspberry: /var/lib/hidro360/media.
 MEDIA_DIR = Path(_env_compat("HIDRO360_MEDIA_DIR", "AGUA_CLARA_MEDIA_DIR") or BASE_DIR / "media")
 MAX_FOTOS_POR_REPORTE = 3
-MAX_BYTES_FOTO = 3 * 1024 * 1024
-TRACE_PATH = Path(_env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE") or BASE_DIR / "logs" / "trazas.jsonl")
+# Tope por foto. Local/Raspberry: 3 MiB. En Vercel el cuerpo de una peticion no puede superar 4,5 MB y las fotos viajan
+# en base64 (+33 %): para 3 fotos use HIDRO360_MAX_BYTES_FOTO=1048576 (3 x 1 MiB ~ 4,2 MB). Ver docs/DESPLIEGUE.md.
+MAX_BYTES_FOTO = int(os.environ.get("HIDRO360_MAX_BYTES_FOTO", "").strip() or 3 * 1024 * 1024)
+_traza = _env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE")
+TRACE_PATH = Path(_traza) if _traza and _traza.lower() != "stdout" else BASE_DIR / "logs" / "trazas.jsonl"
 
 # Envío duplicado accidental: mismo texto en menos de N segundos => se devuelve el reporte ya creado
 IDEMPOTENCIA_SEGUNDOS = 30
@@ -106,3 +114,32 @@ AI_MAX_REINTENTOS = lambda: int(_env("AI_MAX_REINTENTOS", "1"))  # noqa: E731  (
 # HIDRO360_* gana; AGUA_CLARA_* sigue funcionando como alias obsoleto. Se leen en cada llamada (las pruebas los cambian).
 API_TOKEN = lambda: _env_compat("HIDRO360_API_TOKEN", "AGUA_CLARA_API_TOKEN")        # operadores (escritura)  # noqa: E731
 DEVICE_TOKEN = lambda: _env_compat("HIDRO360_DEVICE_TOKEN", "AGUA_CLARA_DEVICE_TOKEN")  # dispositivo heredado (lectura de /estado y confirmaciones)  # noqa: E731
+
+
+# --- Perfil y persistencia -------------------------------------------------------------------
+# HIDRO360_ENV: dev (por defecto) | test | prod. En test no se lee .env (ver _cargar_dotenv).
+ENTORNO = lambda: _env("HIDRO360_ENV", "dev").lower()  # noqa: E731
+# DATABASE_URL: cadena PostgreSQL (Supabase: pooler o conexion directa). Vacia => SQLite local en DB_PATH.
+# Es un secreto (lleva la contrasena): solo en el entorno del servidor, nunca en el repositorio ni en el navegador.
+DATABASE_URL = lambda: _env("DATABASE_URL")  # noqa: E731
+
+
+def modo_postgres() -> bool:
+    return bool(DATABASE_URL())
+
+
+# --- Servicios gestionados (Supabase) --------------------------------------------------------
+# AUTH: "local" (cuentas propias en la base: scrypt + sesiones persistidas) | "supabase" (JWT de Supabase Auth,
+# verificado en el backend; el rol sale de la tabla de usuarios, nunca de claims editables por el cliente).
+AUTH_BACKEND = lambda: _env("HIDRO360_AUTH", "local").lower()  # noqa: E731
+# STORAGE: "local" (carpeta MEDIA_DIR) | "supabase" (bucket PRIVADO; acceso solo desde el backend).
+STORAGE_BACKEND = lambda: _env("HIDRO360_STORAGE", "local").lower()  # noqa: E731
+SUPABASE_URL = lambda: _env("SUPABASE_URL").rstrip("/")  # noqa: E731
+SUPABASE_ANON_KEY = lambda: _env("SUPABASE_ANON_KEY")  # publica por diseno (RLS la limita)  # noqa: E731
+SUPABASE_SERVICE_ROLE_KEY = lambda: _env("SUPABASE_SERVICE_ROLE_KEY")  # PRIVILEGIADA: solo backend  # noqa: E731
+SUPABASE_JWT_SECRET = lambda: _env("SUPABASE_JWT_SECRET")  # solo proyectos con secreto simetrico (HS256)  # noqa: E731
+SUPABASE_STORAGE_BUCKET = lambda: _env("SUPABASE_STORAGE_BUCKET", "reportes-fotos")  # noqa: E731
+# Origenes permitidos por CORS (lista separada por comas). Vacio => sin CORS (mismo origen / dispositivos).
+CORS_ORIGINS = lambda: [o.strip() for o in _env("HIDRO360_CORS_ORIGINS").split(",") if o.strip()]  # noqa: E731
+# Trazas: HIDRO360_TRACE=stdout escribe JSON por linea en la salida estandar (entornos sin disco persistente).
+TRACE_A_STDOUT = lambda: _env_compat("HIDRO360_TRACE", "AGUA_CLARA_TRACE").lower() == "stdout"  # noqa: E731

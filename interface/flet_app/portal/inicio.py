@@ -40,6 +40,6 @@ def build(ctx) -> ft.Control:
                                spacing=12), "Avisos para su comunidad")
     como = C.panel(ft.Column([_paso(1, "Cuéntenos qué pasa", "Describa el problema y el lugar. No necesita crear una cuenta."),
                               _paso(2, "Reciba su código", "Al enviar, verá un código de seguimiento. Guárdelo."),
-                              _paso(3, "Siga el estado", "Con el código puede ver si su reporte fue recibido, revisado o atendido.")], spacing=14),
+                              _paso(3, "Siga el estado", "Con el código puede ver si su reporte fue recibido, está en revisión, fue confirmado o tiene atención programada.")], spacing=14),
                    "¿Cómo funciona?")
     return C.seccion(hero, acciones, avisos, como)

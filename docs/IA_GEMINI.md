@@ -1,6 +1,6 @@
 # IA y Gemini en HIDRO360
 
-> **Estado honesto.** La integración con Gemini está **implementada y probada con un cliente simulado** (y la construcción de objetos del SDK real se valida contra el paquete instalado). **No se ha probado contra el servicio real** porque el desarrollo no tuvo clave. Sin clave el sistema funciona completo en modo local (reglas).
+> **Estado honesto.** Verificado contra el servicio real de Gemini el 2026-10-17 (modelo `gemini-3.5-flash-lite`, 5 reportes sintéticos; ver «Resultados reales»). Las demás pruebas automáticas usan un cliente simulado. Sin clave el sistema funciona completo en modo local (reglas).
 
 ## Qué hace la IA y qué no
 | Tarea | Quién | Dónde |
@@ -58,7 +58,70 @@ Código: `services/orquestador.py` (lógica pura, sin base de datos), `services/
 ### Cómo probarlo
 1. Modo local (sin clave): `.venv\Scripts\python -m pytest tests/test_orquestador.py -q`. Las pruebas con Gemini usan un **cliente simulado (mock)**: demuestran la validación, la procedencia y el fallback, **no** el servicio real.
 2. Servicio real: configure `GEMINI_API_KEY` (ver arriba), ejecute `python -m scripts.verificar_gemini` y después `pytest tests/test_orquestador.py -k gemini_real -q` (se **omite** sin clave). Con clave, además, analice un reporte desde la API y compruebe que `etapas[clasificacion].proveedor` y `etapas[recomendacion].proveedor` sean `gemini`.
-3. **No probado sin clave**: respuestas reales de Gemini al esquema de recomendación (el prompt y la validación están implementados, pero no verificados contra el modelo; es posible que el modelo produzca textos que la validación estricta descarte con frecuencia), latencia/cuotas reales y calidad de la clasificación.
+3. **Qué falta por probar**: volumen (solo decenas de llamadas), calidad semántica de la clasificación frente a un conjunto etiquetado y 5xx/timeouts reales (solo simulados).
 
 ## Limitaciones
 Modelo y cuotas pueden cambiar; la extracción por reglas es regex; el modo Gemini aún no se evaluó con los 22 casos del runner (el runner usa el modo local); no se usa salida estructurada nativa del SDK (`response_schema`) porque no pudo verificarse sin clave: se pide JSON (`response_mime_type`) y se valida con Pydantic.
+
+## Resultados reales (2026-10-17, `gemini-3.5-flash-lite`, nivel gratuito)
+Prueba del flujo COMPLETO (`analizar_reporte`) sobre una base temporal con datos de ejemplo y 5 reportes sintéticos: jerga coloquial con sector, sin sector, con intento de inyección de prompt, con teléfono y correo, y uno largo (~900 caracteres).
+
+| Medida | Antes de ajustar | Después |
+|---|---|---|
+| Clasificación aceptada (`gemini`) | 2/5 | **5/5** |
+| Recomendación aceptada (`gemini`) | 4/4 con sector (la 5.ª, sin sector, la redacta el código por diseño) | **4/4** con sector |
+| Procedencia global `gemini` | 1/5 | 4/5 (la 5.ª es local por diseño: sin sector) |
+| Latencia por llamada | 1,0-1,5 s | igual |
+| `analizar_reporte` completo | 1,4-3,0 s | 1,4-2,5 s |
+
+Causas de descarte observadas en la clasificación (todas de TIPO, no de contenido): `servicio_esencial` devuelto como booleano (`false`/`true`) en vez de texto, y `evidencia` con valores `null`. Se corrigió pidiéndolo explícito en el prompt y normalizando SOLO esos dos deslices (`ingest._normalizar_tipos`) antes del esquema estricto; los campos desconocidos y todo el contenido siguen validándose igual (evidencia literal, sector del catálogo). La recomendación nunca fue descartada con el servicio real. Las ayudas del operador (contexto y patrones) se aceptaron 1/1 y 1/1 tras acotar el filtro de «promesa de hora» a verbos de llegada/envío futuro (`PROMESA_FUTURA`), porque el filtro general rechazaba fechas y horas pasadas legítimas («03:28», «en 72 horas»).
+
+Hallazgos con el servicio real:
+- **La API rechaza plazos menores de 10 s** (HTTP 400, «Minimum allowed deadline is 10s»). Por eso `MINIMO_UTIL_S = 10`: con menos tiempo restante en el presupuesto no se llama a Gemini.
+- **Cuota gratuita**: cargar los datos de ejemplo con `AI_PROVIDER=gemini` interpreta ~20 reportes y agotó el límite por minuto (429) hacia la llamada 15.ª. Cargue los datos de ejemplo con `AI_PROVIDER=local` (`workflow.cargar_datos_demo` no lo fuerza; es un cambio para quien mantiene `workflow.py`).
+- Un 429 suspende Gemini 60 s: el sistema cae a reglas y se recupera solo.
+- La confianza declarada (0,75-0,95) cambió entre llamadas para el mismo texto (p. ej. severidad `media` vs `alta`): confirma que no es una probabilidad calibrada.
+
+## Presupuesto de tiempo y peor caso (serverless)
+Cada llamada tiene plazo `AI_TIMEOUT_SECONDS` (15 s) y, para errores transitorios (5xx/timeout/red), 1 reintento tras 1,5 s. Peor caso de UNA llamada: 15 + 1,5 + 15 = **31,5 s**. `analizar_reporte` hace 2 llamadas (clasificación y recomendación): **63 s sin presupuesto**.
+
+Con presupuesto (`ia_gemini.presupuesto`):
+
+| Operación | Presupuesto | Peor caso |
+|---|---|---|
+| `workflow_ia.analizar_reporte` | `orquestador.PRESUPUESTO_IA_S = 20` s (o `HIDRO360_IA_PRESUPUESTO_S`) | **~20 s** + cálculo determinista (<0,5 s). Si la 1.ª llamada agota 15 s, quedan 5 s (< 10 s) y la 2.ª no se intenta |
+| `ingest.interpretar` (alta de un reporte) | `ingest.PRESUPUESTO_INTERPRETACION_S = 12` s | **~12 s** (sin reintento: no caben 10 s + pausa) |
+| contexto de incidencia / patrones | `ia_operador.PRESUPUESTO_S = 12` s | **~12 s** |
+
+Reglas: el plazo de cada llamada se recorta al tiempo restante pero nunca baja de 10 s (mínimo de la API); si quedan menos de 10 s no se llama y la etapa queda `reglas(fallback)` con motivo «presupuesto de tiempo agotado»; los presupuestos anidados mandan por el más estricto. **Para Vercel**: la función que llame a `analizar_reporte` o `crear_reporte` con Gemini necesita `maxDuration` ≥ 30 s (plan gratuito: 10 s por defecto, configurable hasta 60 s). Con un límite de 10 s use `HIDRO360_IA_PRESUPUESTO_S=5` (equivale a no usar Gemini en el análisis) o `AI_PROVIDER=local`. Prueba: `test_peor_caso_documentado_con_presupuesto` (reloj simulado).
+
+## Qué puede hacer la IA y qué no (matriz de permisos)
+| Acción | IA (Gemini, `ia_*`, `orquestador`, `ingest`) | Quién lo hace |
+|---|---|---|
+| Leer los datos que le entrega el código (sector, puntaje, horas, personas, conteos) | Sí (texto del ciudadano solo en la clasificación, con teléfonos/correos redactados) | — |
+| Proponer la interpretación del texto (sector candidato, cifras con evidencia) | Propone; el código valida | `ingest` |
+| Redactar texto (acción sugerida, resumen de contexto/patrones, borrador) | Sí, validado y con fallback | `ia_tareas`, `ia_operador` |
+| Modificar, confirmar, rechazar o marcar duplicado un reporte | **No** | persona admin (`workflow`) |
+| Calcular prioridad, capacidad o plan | **No** | código determinista |
+| Crear o modificar usuarios, sesiones, tokens | **No** | `auth` / administrador |
+| Crear una misión | **No** | solo `workflow_ia.decidir_recomendacion` (aprobar/modificar) por un admin humano |
+| Enviar mensajes | **No** (solo borradores) | persona |
+| Ejecutar migraciones, escribir en la base o en archivos | **No** | — |
+
+Lo comprueba `tests/test_ia_robustez.py`: análisis AST de `ia_gemini`, `ia_tareas`, `ia_operador`, `orquestador` e `ingest` (no importan `workflow`, `workflow_ia`, `database`, `audit`, `auth` y no llaman a funciones de escritura); la única llamada a `crear_mision` con `recomendacion_id` está en `decidir_recomendacion`; y el flujo completo de IA deja idénticas las tablas de reportes, planes, misiones, usuarios y flota. También se prueba que 7 fallos de Gemini (clave inválida, modelo inexistente, timeout, 429, JSON inválido, campos extra, invención de sector/cisterna/litros) terminan en `reglas(fallback)` sin cambiar esas tablas ni la prioridad.
+
+## Ayudas al operador (solo lectura, `@requiere_admin`)
+```python
+workflow_ia.resumen_contexto_reporte(reporte_id: int, usar_ia: bool = True) -> dict
+  # {"datos": {"reporte": {...}, "duplicados_sugeridos": [{reporte_id, similitud, motivos}], "historial_sector": {...}},
+  #  "resumen": {"texto": str, "origen": "gemini"|"reglas"|"reglas(fallback)", "motivo_fallback": str|None}, "nota": str}
+workflow_ia.detectar_patrones(ventana_horas: int = 72, minimo_reportes: int = 3, usar_ia: bool = True) -> dict
+  # {"parametros", "generado", "reportes_en_ventana",
+  #  "patrones": [{"tipo": "sector_recurrente", "sector", "reportes", "sin_atender", "reporte_ids", "ventana_horas", "explicacion"}
+  #             | {"tipo": "pico_horario", "hora", "reportes", "total_ventana", "reporte_ids", "ventana_horas", "explicacion"}],
+  #  "resumen": {igual que arriba}, "nota": str}
+```
+API: `GET /api/v1/reportes/{id}/contexto?usar_ia=true` y `GET /api/v1/patrones?ventana_horas=72&minimo_reportes=3&usar_ia=true` (administrador; 404 si el reporte no existe; 422 fuera de rango: ventana 1-720, mínimo 2-50). Los patrones son conteos deterministas (cada uno trae su `explicacion` generada por código); la IA solo redacta `resumen`. Preséntelos al operador como indicios, no conclusiones. El texto original del ciudadano no se envía a la IA en estas ayudas.
+
+## Observabilidad
+Cada llamada deja `ia/gemini.<tarea>` con modelo, versión del esquema de salida (`esquema_salida`: `SalidaIA/2`, `SalidaRecomendacion/1`, `texto/1`), estado, duración, intentos, tokens (`uso: {entrada, salida, total}`) si el SDK los informa y, en errores, solo el tipo de excepción y el código HTTP. **No** incluyen texto del ciudadano, teléfonos/correos, claves ni imágenes (prueba: `test_trazas_con_modelo_esquema_tokens_y_sin_fugas`; con el servicio real se comprobó además que la clave, un teléfono y un correo de prueba no aparecen en las trazas ni en la base). En Vercel las trazas salen por stdout (ver `services/tracing.py`).

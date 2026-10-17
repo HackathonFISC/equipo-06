@@ -49,3 +49,30 @@ Barra lateral completa ≥ 980 px y compacta (solo iconos con *tooltip*) por deb
 **Detalle técnico:** las lecturas de los manejadores de eventos usan `ctx.con_actor()` porque Flet los ejecuta fuera de la construcción de la página (sin el actor ambiente). `interface/flet_app/backend.py` localiza las funciones del servidor por nombre y descarta con claridad los argumentos que una versión aún no admite.
 
 **No verificado visualmente:** selección real de fotos con el diálogo del sistema (se probó la lógica con dobles de prueba y la subida con `with_data=True`), la ventana de escritorio con mapas, pantallas estrechas (móvil) y el flujo de rotar/desactivar terminal en navegador (solo en pruebas automáticas).
+
+
+## Revisión de calidad (interfaz v3)
+**Despliegue y sesión.** La interfaz Flet mantiene un WebSocket persistente con un proceso Python y llama a `services.workflow` en el mismo proceso: es una aplicación de **servidor/escritorio** (Windows, Raspberry u otro alojamiento de procesos), no una función de Vercel. Con `DATABASE_URL` definida usa el mismo Postgres que la API. La sesión del administrador es **de proceso**: `Ctx` guarda el token en la memoria del proceso de Flet y el inicio de sesión usa las cuentas **locales** (`services.auth`); no hay inicio de sesión con Supabase en la interfaz (la verificación de JWT de Supabase es de la API). Al reiniciar el programa las sesiones se pierden.
+
+**Auditoría de elementos (qué se retiró o corrigió).**
+| Página | Elemento | Estado |
+|---|---|---|
+| Métricas | Casilla «Dispositivos (futuro) —» | retirado (era relleno sin datos) |
+| Métricas | «Mapa de sectores» esquemático (duplicaba el Mapa real) y «Prioridades actuales» (duplicaba Panel/Prioridades) | retirado; botones a esas páginas |
+| Métricas | Recorrido de reportes sin «En plan» ni «Rechazados» | corregido (todos los estados reales) |
+| Misiones y flota | Tabla «Contrato con la API» con rutas obsoletas | corregido (`/dispositivo/mision`, `/eventos`, `/latido`, `/salud`) |
+| Portal › Consultar | Solo texto de estado | corregido: línea de progreso fiel a `EstadoReporte` + explicación de duplicado/rechazado |
+| Portal › Inicio | «atendido» (promesa que el sistema no puede hacer) | corregido |
+| Revisión / Bandeja | Rechazar: el motivo vacío llegaba al servidor | corregido (`Ctx.pedir_motivo`, validación amistosa) |
+| Duplicados | «Sí, es el mismo incidente» sin confirmar | corregido (confirmación) |
+| Plan | «Rechazar plan» sin motivo | corregido (validación previa) |
+| Menú | Sin gestión de cuentas | añadido «Usuarios» (SISTEMA) |
+El resto (Panel, Bandeja, Mapa, Recomendaciones IA, Revisión, Prioridades, Plan, Comunicación, Auditoría, Misiones, Configuración, Gemini, Datos de ejemplo, Trazas, Impacto, Login, Reportar, Avisos, Datos) está conectado a funciones reales; los estados vacíos lo dicen sin cifras de relleno.
+
+**Seguimiento ciudadano.** Línea Recibido → En revisión → Confirmado → Atención programada según `por_revisar → confirmado → en_plan`; `duplicado` y `rechazado` son terminales con explicación. Nunca se promete fecha ni hora. No se muestra misión ni entrega porque `consultar_reporte_publico` no las expone (petición al backend en el informe de cambios).
+
+**Formularios.** `Ctx.ejecutar(..., bloquear=boton)` deshabilita el botón durante la operación; `Ctx.pedir_motivo` exige el motivo en el cliente; confirmación en aprobar/rechazar plan, aprobar recomendación, marcar duplicado, cancelar misión, rotar/desactivar token y acciones de usuarios. La validación real sigue siendo del backend.
+
+**Móvil.** Por debajo de 980 px el portal usa una sola fila (iconos de 44 px de alto y «Acceso administración» como icono; bajo 560 px solo el logo) y el contenido reduce su margen. El color de texto atenuado se oscureció (`#566478`, contraste ≥ 5:1).
+
+**Usuarios** (`admin/usuarios.py`): usa `crear_usuario_admin`, `listar_usuarios_admin`, `desactivar_usuario`, `reactivar_usuario` y `cambiar_rol_usuario` de `services.workflow` si existen; si falta alguna, oculta esa acción y lo dice. Las reglas (último administrador, contraseñas) son del backend y sus errores se muestran tal cual.

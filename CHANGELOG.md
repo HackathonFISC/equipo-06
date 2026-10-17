@@ -29,6 +29,7 @@
 
 ## Sin versión (en curso)
 ### Cambiado
+- La evaluación funcional fuerza el intérprete local determinista: ya no depende de una clave Gemini configurada en el entorno de quien la ejecuta ni envía sus casos a la red.
 - Identidad unificada a HIDRO360: documentación, skills (`.claude/skills/hidro360-*`), servicios systemd (`hidro360-api.service`, `hidro360-ui.service`; rutas `/opt/hidro360`, `/etc/hidro360`, `/var/lib/hidro360`, usuario `hidro360`). Las variables de entorno conservan el prefijo `AGUA_CLARA_` por compatibilidad.
 - Firmware ESP32-S3: texto en pantalla HIDRO360; los fallos al confirmar recepción ya no muestran «SIN DATOS» (aviso aparte); `setConnectTimeout`; comprobación de `http.begin`. Sigue sin compilarse ni probarse en placa.
 - `docs/HARDWARE.md`: tabla de pines con fuentes; pines libres marcados «no verificado» donde no hay evidencia.

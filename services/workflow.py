@@ -26,7 +26,7 @@ from models.schemas import (AccionDecision, Asignacion, CandidatoDuplicado, Cist
                             EstadoMision, EstadoParada, EstadoPlan, EstadoReporte, EventoMision, Mision,
                             Parada, PrioridadSector, PropuestaPlan, RegistroEvento, Reporte, Sector,
                             SectorPendiente, Severidad)
-from services import (audit, auth, communication, fotos as fotos_srv, geoloc, ia_tareas, ingest, planner,
+from services import (audit, auth, communication, fotos as fotos_srv, geoloc, ia_tareas, ingest, limites, planner,
                       prioritization, tracing)
 from services.auth import requiere_admin
 from services.textutil import normalizar
@@ -36,7 +36,7 @@ class ErrorDeNegocio(ValueError):
     """Error esperado (validación); la interfaz/API lo muestra al usuario."""
 
 
-class ErrorLimite(ErrorDeNegocio):
+class ErrorLimite(limites.ErrorLimite, ErrorDeNegocio):
     """Demasiadas solicitudes desde el mismo origen (→ 429 en la API)."""
 
 
@@ -127,26 +127,22 @@ def _resolver_responsable(declarado: Optional[str]) -> str:
     return a.usuario
 
 
-# Límite de tasa simple en memoria (por origen). Se pierde al reiniciar; no sustituye a un proxy/WAF.
+# Límites de tasa PERSISTIDOS en la base (services/limites.py): valen entre instancias serverless.
 _LIMITE_REPORTES = (10, 60)    # 10 reportes por minuto y origen
 _LIMITE_CONSULTAS = (20, 60)   # 20 consultas de código por minuto y origen (frena la adivinación de códigos)
-_intentos: Dict[str, List[float]] = {}
 
 
 def _limitar(clave: str, limite) -> None:
     maximo, ventana = limite
-    ahora = time.monotonic()
-    recientes = [t for t in _intentos.get(clave, []) if ahora - t < ventana]
-    if len(recientes) >= maximo:
-        _intentos[clave] = recientes
-        raise ErrorLimite("Demasiadas solicitudes. Espere un minuto e inténtelo de nuevo.")
-    recientes.append(ahora)
-    _intentos[clave] = recientes
+    try:
+        limites.limitar(clave, maximo, ventana)
+    except limites.ErrorLimite as e:
+        raise ErrorLimite(str(e))
 
 
 def reiniciar_limites() -> None:
-    """Pruebas: borra los contadores de tasa."""
-    _intentos.clear()
+    """Pruebas: borra los contadores de tasa de la base activa."""
+    db.limpiar_limites(0)
 
 
 def operacion(nombre: str):
@@ -191,8 +187,12 @@ def cargar_datos_demo(responsable: str = "sistema") -> Dict[str, int]:
     for c in CISTERNAS_FICTICIAS:
         cis = Cisterna(**c)
         db.insertar("cisternas", cis.model_dump(mode="json"), clave=cis.id)
-    for texto in REPORTES_FICTICIOS:
-        _crear_reporte(texto, responsable=responsable, canal="demo", ficticio=True, auditar=False)
+    token_local = ingest.solo_local.set(True)      # la carga de ejemplo nunca gasta cuota de IA
+    try:
+        for texto in REPORTES_FICTICIOS:
+            _crear_reporte(texto, responsable=responsable, canal="demo", ficticio=True, auditar=False)
+    finally:
+        ingest.solo_local.reset(token_local)
     audit.registrar(responsable, "cargar_datos_demo", "sistema", "demo",
                     detalle={"reportes": len(REPORTES_FICTICIOS), "cisternas": len(CISTERNAS_FICTICIAS),
                              "sectores": len(SECTORES_FICTICIOS), "ficticio": True})
@@ -237,7 +237,6 @@ def _nuevo_codigo(usados: set) -> str:
             return c
 
 
-@operacion("crear_reporte")
 def crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
                   canal: str = "manual", clave_idempotencia: Optional[str] = None,
                   origen: Optional[str] = None, lat: Optional[float] = None, lng: Optional[float] = None,
@@ -246,9 +245,14 @@ def crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = Fa
     `origen` (p. ej. la IP del portal) activa el límite de tasa. Sin actor el responsable queda como «ciudadano».
     Opcionales: `lat`/`lng` (ubicación elegida en el mapa, dentro de Panamá Oeste) y `fotos`
     ([{"nombre":.., "base64":..}], máx. config.MAX_FOTOS_POR_REPORTE; validadas por firma binaria)."""
-    if origen:
+    if origen:      # fuera de la transacción: el evento de límite se conserva aunque la operación se rechace
         _limitar("reporte:" + origen, _LIMITE_REPORTES)
-    return _crear_reporte(texto, responsable, ficticio, auditar, canal, clave_idempotencia, lat, lng, fotos)
+    return _crear_reporte_tx(texto, responsable, ficticio, auditar, canal, clave_idempotencia, lat, lng, fotos)
+
+
+@operacion("crear_reporte")
+def _crear_reporte_tx(*a, **k) -> Reporte:
+    return _crear_reporte(*a, **k)
 
 
 def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = False, auditar: bool = True,
@@ -304,7 +308,10 @@ def _crear_reporte(texto: str, responsable: str = "anónimo", ficticio: bool = F
         rid = db.insertar("reportes", datos)
         tracing.correlacionar(f"reporte:{rid}")
         for contenido, mime in validadas:
-            f = fotos_srv.guardar(contenido, mime, rid)
+            try:
+                f = fotos_srv.guardar(contenido, mime, rid)
+            except fotos_srv.ErrorFoto as e:       # el reporte no queda a medias: se revierte todo
+                raise ErrorDeNegocio(str(e))
             escritas.append((f.id, f.tipo_mime))
             datos["foto_ids"].append(f.id)
         if escritas:
@@ -729,10 +736,28 @@ def consultar_reporte_publico(codigo: str, origen: Optional[str] = None) -> Dict
     if r is None:
         raise ErrorDeNegocio(MENSAJE_CODIGO_INVALIDO)
     confirmado = r.estado in (EstadoReporte.CONFIRMADO, EstadoReporte.EN_PLAN)
-    return {"codigo": c, "estado_publico": _ESTADO_PUBLICO[r.estado],
+    return {"codigo": c, "estado": r.estado.value, "estado_publico": _ESTADO_PUBLICO[r.estado],
+            "atencion": _atencion_publica(r),
             "sector": r.sector if confirmado else None,
             "fecha_creacion": r.fecha_creacion.isoformat(timespec="minutes"),
             "tiene_ubicacion": r.lat is not None and r.lng is not None, "n_fotos": len(r.foto_ids)}
+
+
+def _atencion_publica(r: Reporte) -> Optional[Dict[str, bool]]:
+    """Solo para reportes en plan: ¿hay una misión (no cancelada) con parada para este reporte y se registró su
+    entrega? Sin cisterna, litros, horas ni coordenadas."""
+    if r.estado != EstadoReporte.EN_PLAN:
+        return None
+    asignada = entregada = False
+    for d in db.listar("misiones"):
+        m = Mision(**d)
+        if m.estado == EstadoMision.CANCELADA:
+            continue
+        for p in m.paradas:
+            if r.id in p.reporte_ids:
+                asignada = True
+                entregada = entregada or p.estado == EstadoParada.ENTREGADA
+    return {"mision_asignada": asignada, "entrega_registrada": entregada}
 
 
 def avisos_publicos() -> List[Dict[str, Any]]:
@@ -767,6 +792,25 @@ def obtener_foto(reporte_id: int, foto_id: str) -> Tuple[bytes, str]:
     if res is None:
         raise ErrorDeNegocio("La foto no existe o su archivo no está disponible.")
     return res
+
+
+@requiere_admin
+@operacion("eliminar_foto")
+def eliminar_foto(reporte_id: int, foto_id: str, motivo: str, responsable: str = "") -> Reporte:
+    """Borrado controlado de una foto (p. ej. contiene datos personales). Quita archivo, metadatos y la referencia
+    del reporte, con motivo obligatorio y auditoría. Si el almacén no confirma el borrado, no cambia nada."""
+    quien = _quien(responsable)
+    if not (motivo or "").strip():
+        raise ErrorDeNegocio("Indique el motivo del borrado.")
+    r = _obtener_reporte(reporte_id)
+    if foto_id not in r.foto_ids:
+        raise ErrorDeNegocio("La foto no existe.")
+    if not fotos_srv.eliminar(foto_id):
+        raise ErrorDeNegocio("No se pudo borrar el archivo de la foto; no se hizo ningún cambio.")
+    r.foto_ids = [x for x in r.foto_ids if x != foto_id]
+    _guardar_reporte(r)
+    audit.registrar(quien, "eliminar_foto", "reporte", reporte_id, motivo=motivo.strip(), detalle={"foto_id": foto_id})
+    return r
 
 
 def _quien(responsable: Optional[str] = None) -> str:
@@ -849,6 +893,115 @@ def desactivar_dispositivo(cisterna_id: str, responsable: str = "") -> Dispositi
 @requiere_admin
 def listar_dispositivos() -> List[Dispositivo]:
     return [_sin_hash(Dispositivo(**d)) for d in db.listar("dispositivos")]
+
+
+# ============================================================ usuarios (administración)
+def _usuario_publico(d: dict) -> Dict[str, Any]:
+    """Sin hash ni sal."""
+    return {"usuario": d["usuario"], "rol": d["rol"], "activo": d.get("activo", True), "creado": d.get("creado"),
+            "origen": "supabase" if (d.get("email") or d.get("supabase_uid")) else "local",
+            "vinculado": bool(d.get("supabase_uid"))}
+
+
+def _doc_usuario(usuario: str) -> dict:
+    d = db.obtener("usuarios", (usuario or "").strip().lower())
+    if d is None:
+        raise ErrorDeNegocio("El usuario no existe.")
+    return d
+
+
+def _admins_activos() -> List[dict]:
+    return [u for u in db.listar("usuarios") if u.get("rol") == auth.Rol.ADMIN.value and u.get("activo", True)]
+
+
+def _exigir_otro_admin(d: dict) -> None:
+    """Nunca se puede dejar el sistema sin administradores activos."""
+    if d.get("rol") == auth.Rol.ADMIN.value and d.get("activo", True) and \
+            not any(u["usuario"] != d["usuario"] for u in _admins_activos()):
+        raise ErrorDeNegocio("No se puede dejar el sistema sin administradores activos.")
+
+
+@requiere_admin
+def listar_usuarios_admin() -> List[Dict[str, Any]]:
+    return [_usuario_publico(d) for d in db.listar("usuarios")]
+
+
+@requiere_admin
+@operacion("crear_usuario")
+def crear_usuario_admin(usuario: str, rol: str = "usuario", clave: Optional[str] = None,
+                        responsable: str = "") -> Dict[str, Any]:
+    """Crea una cuenta. Con HIDRO360_AUTH=local exige `clave` (política de contraseñas) y `usuario` es un nombre;
+    con HIDRO360_AUTH=supabase `usuario` es el correo de una cuenta de Supabase y se crea solo el PERFIL (rol y
+    estado) a vincular en su primer acceso; no se acepta clave. No reemplaza cuentas existentes."""
+    quien = _quien(responsable)
+    try:
+        rol_ = auth.Rol(rol)
+    except ValueError:
+        raise ErrorDeNegocio("Rol inválido (administrador | usuario).")
+    u = (usuario or "").strip().lower()
+    if db.obtener("usuarios", u) is not None:
+        raise ErrorDeNegocio("Ya existe un usuario con ese nombre.")
+    try:
+        if config.AUTH_BACKEND() == "supabase":
+            if clave:
+                raise ErrorDeNegocio("Con Supabase Auth la contraseña se gestiona en Supabase, no aquí.")
+            from services import auth_supabase
+            auth_supabase.crear_perfil(u, rol_)
+        else:
+            if not clave:
+                raise ErrorDeNegocio("Indique una contraseña.")
+            auth.crear_usuario(u, clave, rol_)
+    except ValueError as e:
+        if isinstance(e, ErrorDeNegocio):
+            raise
+        raise ErrorDeNegocio(str(e))
+    audit.registrar(quien, "crear_usuario", "usuario", u, detalle={"rol": rol_.value})
+    return _usuario_publico(_doc_usuario(u))
+
+
+def _cambiar_activo(usuario: str, activo: bool, responsable: str) -> Dict[str, Any]:
+    quien = _quien(responsable)
+    d = _doc_usuario(usuario)
+    if d.get("activo", True) == activo:
+        raise ErrorDeNegocio(f"El usuario ya está {'activo' if activo else 'desactivado'}.")
+    if not activo:
+        _exigir_otro_admin(d)
+    d["activo"] = activo
+    db.actualizar("usuarios", d["usuario"], d)
+    audit.registrar(quien, "reactivar_usuario" if activo else "desactivar_usuario", "usuario", d["usuario"])
+    return _usuario_publico(d)
+
+
+@requiere_admin
+@operacion("desactivar_usuario")
+def desactivar_usuario(usuario: str, responsable: str = "") -> Dict[str, Any]:
+    """Bloquea el acceso al instante (sesiones locales y JWT de Supabase dejan de valer)."""
+    return _cambiar_activo(usuario, False, responsable)
+
+
+@requiere_admin
+@operacion("reactivar_usuario")
+def reactivar_usuario(usuario: str, responsable: str = "") -> Dict[str, Any]:
+    return _cambiar_activo(usuario, True, responsable)
+
+
+@requiere_admin
+@operacion("cambiar_rol_usuario")
+def cambiar_rol_usuario(usuario: str, rol: str, responsable: str = "") -> Dict[str, Any]:
+    quien = _quien(responsable)
+    try:
+        nuevo = auth.Rol(rol)
+    except ValueError:
+        raise ErrorDeNegocio("Rol inválido (administrador | usuario).")
+    d = _doc_usuario(usuario)
+    if d["rol"] == nuevo.value:
+        raise ErrorDeNegocio("El usuario ya tiene ese rol.")
+    if nuevo != auth.Rol.ADMIN:
+        _exigir_otro_admin(d)
+    anterior, d["rol"] = d["rol"], nuevo.value
+    db.actualizar("usuarios", d["usuario"], d)
+    audit.registrar(quien, "cambiar_rol_usuario", "usuario", d["usuario"], detalle={"antes": anterior, "despues": nuevo.value})
+    return _usuario_publico(d)
 
 
 def autenticar_dispositivo(token: Optional[str]) -> Optional[Dispositivo]:

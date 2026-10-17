@@ -1,0 +1,34 @@
+# Archivos que NO se suben a Vercel (la funcion solo necesita api/, services/, models/, data/, config.py).
+.venv/
+.venv*/
+venv/
+.git/
+.claude/
+.tools/
+__pycache__/
+*.pyc
+.env
+.env.*
+!.env.example
+*.db
+*.db-wal
+*.db-shm
+*.sqlite*
+media/
+logs/
+backups/
+firmware/
+deploy/
+interface/
+evaluation/
+tests/
+docs/
+assets/
+proyecto_info/
+INFO DEL PROYECTO/
+LOGO/
+PROTOTIPO/
+Demo/
+PANTALLA_DE_MONITOREO/
+supabase/.temp/
+supabase/.branches/

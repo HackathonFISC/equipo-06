@@ -62,12 +62,19 @@ def build(ctx) -> ft.Control:
         except ValueError:
             raise ValueError(f"«{campo.label}» debe ser un número.")
 
+    boton_confirmar = C.boton("Confirmar datos y ubicación" if r.estado == EstadoReporte.POR_REVISAR else "Guardar correcciones",
+                              lambda e: confirmar(e), ft.Icons.CHECK_CIRCLE)
+
     def confirmar(e):
         error.value = ""
         try:
             horas, pers = numero(f_horas, float), numero(f_pers, int)
         except ValueError as ex:
             error.value = str(ex)
+            ctx.actualizar()
+            return
+        if (horas is not None and horas < 0) or (pers is not None and pers < 0):
+            error.value = "Las horas y las personas no pueden ser negativas."
             ctx.actualizar()
             return
         if not f_sector.value:
@@ -80,27 +87,23 @@ def build(ctx) -> ft.Control:
             servicio_esencial=(f_ese.value or "").strip() or None,
             vulnerabilidades=[c.data for c in f_vul.controls if c.value],
             tipo_incidencia=None if f_tipo.value in (None, "(sin dato)") else f_tipo.value),
-            f"Reporte #{r.id} confirmado. Revise posibles duplicados.")
+            f"Reporte #{r.id} confirmado. Revise posibles duplicados.", bloquear=boton_confirmar)
         if ok:
             ctx.refrescar()
 
     def rechazar(e):
-        motivo = C.campo("Motivo del rechazo (obligatorio)", "", autofocus=True)
-
-        def hecho(ev):
-            ok, _ = ctx.ejecutar(lambda: workflow.rechazar_reporte(r.id, ctx.responsable, motivo.value or ""), f"Reporte #{r.id} rechazado.")
+        def hacer(motivo: str) -> bool:
+            ok, _ = ctx.ejecutar(lambda: workflow.rechazar_reporte(r.id, ctx.responsable, motivo), f"Reporte #{r.id} rechazado.")
             if ok:
-                ctx.page.pop_dialog()
                 ctx.seleccion.pop("reporte_id", None)
                 ctx.refrescar()
+            return ok
 
-        ctx.dialogo("Rechazar reporte", motivo, [ft.TextButton("Cancelar", on_click=lambda ev: ctx.page.pop_dialog()),
-                                                 ft.Button("Rechazar", on_click=hecho, style=ft.ButtonStyle(bgcolor=T.RED, color=T.WHITE))])
+        ctx.pedir_motivo(f"Rechazar el reporte #{r.id}", "Motivo del rechazo (obligatorio)", hacer, "Rechazar")
 
     form = ft.Column([f_sector, ft.Row([f_horas, f_pers], spacing=12, wrap=True), ft.Row([f_sev, f_tipo], spacing=12, wrap=True), f_calle,
                       ft.Text("Personas vulnerables afectadas", size=12, color=T.MUTED), f_vul, f_ese, error,
-                      ft.Row([C.boton("Confirmar datos y ubicación" if r.estado == EstadoReporte.POR_REVISAR else "Guardar correcciones",
-                                      confirmar, ft.Icons.CHECK_CIRCLE),
+                      ft.Row([boton_confirmar,
                               C.boton("Rechazar", rechazar, ft.Icons.BLOCK, "secundario"),
                               C.boton("Ver duplicados", lambda e: ctx.ir("duplicados", reporte_id=r.id), ft.Icons.CONTENT_COPY, "secundario")],
                              spacing=10, wrap=True)], spacing=10)

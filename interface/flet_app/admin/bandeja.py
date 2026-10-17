@@ -81,16 +81,13 @@ def build(ctx) -> ft.Control:
         return ft.Row(miniaturas, spacing=10, wrap=True, run_spacing=10)
 
     def rechazar(r):
-        motivo = C.campo("Motivo del rechazo (obligatorio)", "", autofocus=True)
-
-        def hecho(ev):
-            ok, _ = ctx.ejecutar(lambda: workflow.rechazar_reporte(r.id, ctx.responsable, motivo.value or ""), f"Reporte #{r.id} rechazado.")
+        def hacer(motivo: str) -> bool:
+            ok, _ = ctx.ejecutar(lambda: workflow.rechazar_reporte(r.id, ctx.responsable, motivo), f"Reporte #{r.id} rechazado.")
             if ok:
-                ctx.page.pop_dialog()
                 ctx.refrescar()
+            return ok
 
-        ctx.dialogo("Rechazar reporte", motivo, [ft.TextButton("Cancelar", on_click=lambda ev: ctx.page.pop_dialog()),
-                                                 ft.Button("Rechazar", on_click=hecho, style=ft.ButtonStyle(bgcolor=T.RED, color=T.WHITE))])
+        ctx.pedir_motivo(f"Rechazar el reporte #{r.id}", "Motivo del rechazo (obligatorio)", hacer, "Rechazar")
 
     def analizar(r):
         ok, rec = ctx.ejecutar(lambda: backend.llamar("analizar_reporte", r.id, ctx.responsable),

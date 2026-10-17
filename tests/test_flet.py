@@ -286,8 +286,8 @@ def test_plan_generar_aprobar_y_rechazar_con_reglas(ctx):
     p = pagina(ctx, "plan")
     plan = workflow.listar_planes()[0]
     assert plan.estado == EstadoPlan.PROPUESTO and "PROPUESTA" in textos(p)
-    boton(p, "Rechazar plan").on_click(None)       # sin motivo: el backend lo impide y la interfaz avisa
-    assert workflow.obtener_plan(plan.id).estado == EstadoPlan.PROPUESTO and ctx.avisos[-1][0] == "bad"
+    boton(p, "Rechazar plan").on_click(None)       # sin motivo: la interfaz lo pide antes de molestar al servidor
+    assert workflow.obtener_plan(plan.id).estado == EstadoPlan.PROPUESTO and campo(p, "Motivo").error_text
     boton(p, "Aprobar plan").on_click(None)
     assert workflow.obtener_plan(plan.id).estado == EstadoPlan.APROBADO
     p = pagina(ctx, "plan")
@@ -528,11 +528,12 @@ def test_bandeja_rechazar_desde_detalle_abre_dialogo_con_motivo(ctx, monkeypatch
     capturado = {}
     monkeypatch.setattr(ctx, "dialogo", lambda titulo, contenido, acciones=None: capturado.update(titulo=titulo, contenido=contenido, acciones=acciones))
     boton(p, "Rechazar reporte").on_click(None)
-    assert capturado["titulo"] == "Rechazar reporte" and "Motivo" in todo_el_texto(capturado["contenido"])
+    assert f"#{r.id}" in capturado["titulo"] and "Motivo" in todo_el_texto(capturado["contenido"])
     ctx.page = PaginaFalsa()
-    capturado["acciones"][1].on_click(None)                              # sin motivo: el backend lo impide
-    assert workflow.obtener_reporte(r.id).estado == EstadoReporte.POR_REVISAR and ctx.avisos[-1][0] == "bad"
-    capturado["contenido"].value = "reporte de prueba"
+    caja = buscar(capturado["contenido"], ft.TextField)
+    capturado["acciones"][1].on_click(None)                              # sin motivo: lo detiene el cliente, no se llama al servidor
+    assert workflow.obtener_reporte(r.id).estado == EstadoReporte.POR_REVISAR and caja.error_text
+    caja.value = "reporte de prueba"
     capturado["acciones"][1].on_click(None)
     assert workflow.obtener_reporte(r.id).estado == EstadoReporte.RECHAZADO
 
@@ -672,3 +673,120 @@ def test_manejadores_de_eventos_usan_la_sesion_aunque_no_haya_actor_ambiente(ctx
     with auth.como(None):
         boton(m, "Actualizar").on_click(None)
     assert "Parte de los datos no está disponible" not in todo_el_texto(m)
+
+
+# ============================================ v3: seguimiento fiel, usuarios, honestidad de la interfaz
+def test_consulta_linea_de_progreso_fiel_a_los_estados_reales():
+    from interface.flet_app.portal import consultar as K
+    base = {"codigo": "HID-ABCDEFGH", "sector": None, "fecha_creacion": "2026-10-17T10:00"}
+    casos = {"Recibido, en revisión.": ("por_revisar", 1), "Confirmado, en evaluación.": ("confirmado", 2),
+             "Atención programada, hora aún sin confirmar.": ("en_plan", 3)}
+    for texto, (clave, pos) in casos.items():
+        d = {**base, "estado_publico": texto}
+        assert K.estado_de(d) == clave
+        panel = K._resultado(d)
+        assert buscar(panel, ft.ResponsiveRow) is not None
+        assert "no indica fecha ni hora" in textos(panel)          # nunca se promete hora
+    # la clave `estado` del servidor, si existe, manda sobre el texto
+    assert K.estado_de({**base, "estado": "en_plan", "estado_publico": "x"}) == "en_plan"
+    for texto, clave in (("Agrupado con otro reporte del mismo problema.", "duplicado"), ("No procede como reporte.", "rechazado")):
+        d = {**base, "estado_publico": texto}
+        assert K.estado_de(d) == clave
+        panel = K._resultado(d)
+        assert buscar(panel, ft.ResponsiveRow) is None             # estado terminal: sin línea de progreso
+        assert K.TERMINALES[clave][0] in textos(panel) or K.TERMINALES[clave][0] in todo_el_texto(panel)
+
+
+def test_consulta_valida_el_formato_del_codigo_antes_de_llamar(portal):
+    p = pagina(portal, "consultar")
+    campo(p, "Código").value = "no es un codigo!"
+    boton(p, "Consultar").on_click(None)
+    assert campo(p, "Código").error_text and "HID-" in campo(p, "Código").error_text
+
+
+def test_consulta_de_un_reporte_real_muestra_progreso(portal):
+    r = workflow.crear_reporte("Sin agua en Capira desde ayer", "t")
+    portal.seleccion["codigo"] = r.codigo_seguimiento
+    p = pagina(portal, "consultar")
+    assert buscar(p, ft.ResponsiveRow) is not None and "En revisión" in todo_el_texto(p)
+
+
+def test_metricas_sin_relleno_ni_mapa_inventado(ctx):
+    p = pagina(ctx, "metricas")
+    t = todo_el_texto(p)
+    assert "futuro" not in t and "esquemático" not in t.lower() and "Dispositivos" not in t
+
+
+def test_ejecutar_bloquea_el_boton_mientras_trabaja_y_lo_libera():
+    c = construir_ctx(admin=True)
+    b = ft.Button("x")
+    visto = {}
+    ok, v = c.ejecutar(lambda: visto.setdefault("durante", b.disabled) or 7, bloquear=b)
+    assert ok and visto["durante"] is True and b.disabled is False
+    ok, _ = c.ejecutar(lambda: 1 / 0, bloquear=b)
+    assert not ok and b.disabled is False                          # también se libera si falla
+
+
+def test_pedir_motivo_exige_motivo_en_el_cliente(monkeypatch):
+    c = construir_ctx(admin=True)
+    c.page = PaginaFalsa()
+    cap = {}
+    monkeypatch.setattr(c, "dialogo", lambda t, cont, acc=None: cap.update(cont=cont, acc=acc))
+    llamadas = []
+    c.pedir_motivo("Cancelar", "Motivo", lambda m: llamadas.append(m) or True, "Cancelar misión")
+    caja = buscar(cap["cont"], ft.TextField)
+    cap["acc"][1].on_click(None)
+    assert llamadas == [] and caja.error_text
+    caja.value = "  porque sí "
+    cap["acc"][1].on_click(None)
+    assert llamadas == ["porque sí"] and caja.error_text is None
+
+
+def test_usuarios_sin_funciones_del_servidor_no_se_rompe(ctx, monkeypatch):
+    for n in ("listar_usuarios_admin", "crear_usuario_admin", "desactivar_usuario", "reactivar_usuario", "cambiar_rol_usuario"):
+        monkeypatch.delattr(workflow, n, raising=False)
+    p = pagina(ctx, "usuarios")
+    t = todo_el_texto(p)
+    assert "todavía no está disponible" in t and "No se pudo mostrar" not in t
+
+
+def test_usuarios_lista_confirma_y_muestra_el_error_del_ultimo_admin(ctx, monkeypatch):
+    estado = {"u": [{"usuario": "admin1", "rol": "administrador", "activo": True, "creado": "2026-10-01T10:00"},
+                    {"usuario": "ana", "rol": "usuario", "activo": True, "creado": "2026-10-02T10:00"}]}
+    llamadas = []
+
+    def desactivar(usuario):
+        if usuario == "admin1":
+            raise workflow.ErrorDeNegocio("No se puede dejar el sistema sin administradores activos.")
+        llamadas.append(usuario)
+        next(x for x in estado["u"] if x["usuario"] == usuario)["activo"] = False
+
+    monkeypatch.setattr(workflow, "listar_usuarios_admin", lambda: list(estado["u"]), raising=False)
+    monkeypatch.setattr(workflow, "desactivar_usuario", desactivar, raising=False)
+    p = pagina(ctx, "usuarios")
+    t = todo_el_texto(p)
+    assert "admin1" in t and "(usted)" in t and "administrador" in t and "ana" in t
+    desactivar_btns = [b for b in recorrer(p) if isinstance(b, ft.TextButton) and b.content == "Desactivar"]
+    assert len(desactivar_btns) == 2
+    desactivar_btns[1].on_click(None)                               # confirmar() sin página ejecuta directo
+    assert llamadas == ["ana"]
+    desactivar_btns[0].on_click(None)
+    assert ctx.avisos[-1] == ("bad", "No se puede dejar el sistema sin administradores activos.")
+
+
+def test_usuarios_exige_sesion_de_administrador(portal):
+    assert app.resolver(portal, "usuarios") == "login"
+
+
+def test_usuarios_con_backend_real_crea_cambia_y_protege_al_ultimo_admin(ctx):
+    p = pagina(ctx, "usuarios")
+    assert "admin1" in todo_el_texto(p) and "(usted)" in todo_el_texto(p)
+    campo(p, "Usuario").value = "ana"
+    campo(p, "Contraseña").value = CLAVE
+    boton(p, "Crear cuenta").on_click(None)          # confirmar() sin página ejecuta directo
+    assert any(u["usuario"] == "ana" for u in workflow.listar_usuarios_admin())
+    p = pagina(ctx, "usuarios")
+    sin_admin = [b for b in recorrer(p) if isinstance(b, ft.TextButton) and b.content == "Desactivar"]
+    sin_admin[0].on_click(None)                      # admin1 es el único administrador activo
+    assert ctx.avisos[-1][0] == "bad" and "administradores" in ctx.avisos[-1][1]
+    assert next(u for u in workflow.listar_usuarios_admin() if u["usuario"] == "admin1")["activo"] is True

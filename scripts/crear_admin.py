@@ -1,11 +1,18 @@
 """
 Crea (o restablece) una cuenta de HIDRO360 pidiendo la contraseña sin mostrarla. No existen cuentas predeterminadas.
 
-    python -m scripts.crear_admin                 # administrador
+    python -m scripts.crear_admin                 # administrador (cuenta local con contraseña)
     python -m scripts.crear_admin --rol usuario   # cuenta sin permisos administrativos
+    python -m scripts.crear_admin --supabase-email jefa@ejemplo.com
+                                                  # perfil de administrador vinculado a una cuenta de Supabase Auth
 
 La contraseña nunca se guarda en texto plano (scrypt con sal) ni se acepta por argumento de línea de comandos
 (quedaría en el historial del shell).
+
+Con --supabase-email NO se pide contraseña: la identidad vive en Supabase (cree la cuenta en el panel de Supabase con
+el registro abierto DESACTIVADO) y aquí solo se crea el perfil local que concede el rol. El perfil se vincula al `sub`
+de Supabase en el primer acceso. Use HIDRO360_AUTH=supabase y DATABASE_URL del entorno de destino. Si el correo ya
+tiene perfil, no se reemplaza.
 """
 
 import argparse
@@ -22,7 +29,17 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--usuario", help="nombre de usuario (si se omite, se pregunta)")
     ap.add_argument("--rol", choices=[r.value for r in auth.Rol], default=auth.Rol.ADMIN.value)
+    ap.add_argument("--supabase-email", help="correo de la cuenta de Supabase a la que se concede el rol")
     a = ap.parse_args()
+    if a.supabase_email:
+        from services import auth_supabase
+        try:
+            doc = auth_supabase.crear_perfil(a.supabase_email, auth.Rol(a.rol))
+        except ValueError as e:
+            print(f"No se creó el perfil: {e}")
+            return 1
+        print(f"Perfil «{doc['usuario']}» creado con rol {a.rol}. Se vinculará a su cuenta de Supabase en el primer acceso.")
+        return 0
     usuario = (a.usuario or input("Usuario: ")).strip()
     clave = getpass.getpass("Contraseña: ")
     if clave != getpass.getpass("Repita la contraseña: "):

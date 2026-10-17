@@ -13,6 +13,7 @@ from fastapi.testclient import TestClient
 import config
 from api.main import app
 from models.schemas import AccionDecision
+from data import database as db
 from services import audit, auth, workflow
 from services.auth import ErrorAutenticacion, ErrorAutorizacion, Rol
 from services.workflow import ErrorDeNegocio
@@ -114,11 +115,23 @@ def test_sesion_expira_y_logout_invalida():
     assert auth.actor_de_token(t1) is None
     t2 = auth.iniciar_sesion("jefa", CLAVE)
     h = auth._huella(t2)
-    actor, _ = auth._sesiones[h]
-    auth._sesiones[h] = (actor, auth.time.monotonic() - 1)   # ya venció
+    doc = db.obtener("sesiones", h)
+    assert doc["usuario"] == "jefa" and h != t2 and t2 not in json.dumps(doc)   # solo se guarda la huella
+    db.actualizar("sesiones", h, {**doc, "expira": auth.time.time() - 1})        # ya venció
     assert auth.actor_de_token(t2) is None
+    assert db.obtener("sesiones", h) is None                                     # y se purga al consultarla
     assert auth.actor_de_token("token-inventado") is None
-    assert t2 not in str(auth._sesiones)                      # solo se guarda la huella
+
+
+def test_sesion_se_invalida_si_se_desactiva_o_cambia_de_rol_el_usuario():
+    _crear("jefa", Rol.ADMIN)
+    _crear("otra", Rol.ADMIN)
+    t = auth.iniciar_sesion("jefa", CLAVE)
+    d = auth._doc("jefa")
+    db.actualizar("usuarios", "jefa", {**d, "rol": "usuario"})
+    assert auth.actor_de_token(t).rol == Rol.USUARIO                  # el rol vigente es el de la tabla
+    db.actualizar("usuarios", "jefa", {**d, "activo": False})
+    assert auth.actor_de_token(t) is None                             # desactivada: la sesión ya no vale
 
 
 # ------------------------------------------------------ autorización en la lógica de negocio
@@ -131,7 +144,8 @@ FUNCIONES_ADMIN = ["corregir_y_confirmar", "rechazar_reporte", "resolver_duplica
                    "decidir_plan", "cargar_datos_demo", "listar_reportes", "obtener_reporte", "sugerir_duplicados",
                    "decisiones_duplicado", "calcular_prioridades", "visibilidad_sectores", "listar_planes",
                    "obtener_plan", "explicar_prioridad_ia", "redactar_borrador_ia",
-                   "obtener_foto", "registrar_dispositivo", "rotar_token", "desactivar_dispositivo",
+                   "obtener_foto", "eliminar_foto", "listar_usuarios_admin", "crear_usuario_admin",
+                   "desactivar_usuario", "reactivar_usuario", "cambiar_rol_usuario", "registrar_dispositivo", "rotar_token", "desactivar_dispositivo",
                    "listar_dispositivos", "crear_mision", "crear_mision_desde_plan", "listar_misiones",
                    "obtener_mision", "cancelar_mision", "listar_eventos", "datos_mapa"]
 # Sin rol de usuario por diseño (ver comentarios en workflow.py)
@@ -322,7 +336,9 @@ def test_portal_publico_crea_y_consulta_sin_credenciales_ni_filtraciones(monkeyp
     g = c.get(f"/api/v1/publico/reportes/{codigo.lower()}")
     assert g.status_code == 200
     cuerpo = g.json()
-    assert set(cuerpo) == {"codigo", "estado_publico", "sector", "fecha_creacion", "tiene_ubicacion", "n_fotos"}
+    assert set(cuerpo) == {"codigo", "estado", "estado_publico", "atencion", "sector", "fecha_creacion",
+                          "tiene_ubicacion", "n_fotos"}
+    assert cuerpo["estado"] == "por_revisar" and cuerpo["atencion"] is None
     assert cuerpo["estado_publico"].startswith("Recibido") and cuerpo["sector"] is None
     for texto in (r.text, g.text):
         assert "Maria" not in texto and "6000" not in texto and "casa azul" not in texto
@@ -412,3 +428,123 @@ def test_ciudadano_puede_reportar_sin_actor_pero_no_administrar(sin_actor):
         workflow.obtener_reporte(r.id)
     with pytest.raises(ErrorAutenticacion):
         workflow.listar_reportes()
+
+
+# ------------------------------------------------------------ gestión de usuarios (administración)
+ADMIN_SVC = {"X-API-Token": "op-test"}
+
+
+@pytest.fixture
+def api_admin(monkeypatch):
+    monkeypatch.setenv("HIDRO360_API_TOKEN", "op-test")
+    return TestClient(app, headers=ADMIN_SVC)
+
+
+def test_usuarios_exigen_credenciales_y_rol_admin():
+    c = TestClient(app)
+    _crear("pepe", Rol.USUARIO)
+    h = _bearer(_login(c, "pepe").json()["token"])
+    for m, ruta, cuerpo in (("GET", "/api/v1/usuarios", None), ("POST", "/api/v1/usuarios", {}),
+                            ("POST", "/api/v1/usuarios/pepe/desactivar", {}),
+                            ("POST", "/api/v1/usuarios/pepe/reactivar", {}),
+                            ("POST", "/api/v1/usuarios/pepe/rol", {"rol": "administrador"})):
+        assert c.request(m, ruta, json=cuerpo).status_code == 401
+        assert c.request(m, ruta, json=cuerpo, headers=h).status_code == 403
+    # un usuario no puede auto-ascenderse
+    assert auth._doc("pepe")["rol"] == "usuario"
+
+
+def test_ciclo_de_vida_de_usuarios_por_api(api_admin):
+    c = api_admin
+    r = c.post("/api/v1/usuarios", json={"usuario": "ana", "rol": "administrador", "clave": CLAVE})
+    assert r.status_code == 201 and r.json()["usuario"] == "ana" and r.json()["activo"] is True
+    assert "hash" not in r.text and "sal" not in r.text
+    assert c.post("/api/v1/usuarios", json={"usuario": "ana", "rol": "usuario", "clave": CLAVE}).status_code == 422   # no reemplaza
+    assert c.post("/api/v1/usuarios", json={"usuario": "luis", "rol": "usuario", "clave": "corta"}).status_code == 422
+    assert c.post("/api/v1/usuarios", json={"usuario": "luis", "rol": "dios", "clave": CLAVE}).status_code == 422
+    assert c.post("/api/v1/usuarios", json={"usuario": "luis", "rol": "usuario"}).status_code == 422              # sin clave
+    assert [u["usuario"] for u in c.get("/api/v1/usuarios").json()] == ["ana"]
+    # desactivar: la sesión abierta deja de valer al instante
+    cliente = TestClient(app)
+    tok = _login(cliente, "ana").json()["token"]
+    assert cliente.get("/api/v1/auth/yo", headers=_bearer(tok)).status_code == 200
+    c.post("/api/v1/usuarios", json={"usuario": "beto", "rol": "administrador", "clave": CLAVE})
+    assert c.post("/api/v1/usuarios/ana/desactivar", json={}).status_code == 200
+    assert cliente.get("/api/v1/auth/yo", headers=_bearer(tok)).status_code == 401
+    assert _login(cliente, "ana").status_code == 401
+    assert c.post("/api/v1/usuarios/ana/desactivar", json={}).status_code == 409          # ya desactivado
+    assert c.post("/api/v1/usuarios/ana/reactivar", json={}).status_code == 200
+    assert _login(cliente, "ana").status_code == 200
+    assert c.post("/api/v1/usuarios/nadie/desactivar", json={}).status_code == 404
+    # cambio de rol auditado
+    assert c.post("/api/v1/usuarios/ana/rol", json={"rol": "usuario"}).json()["rol"] == "usuario"
+    acciones = [e.accion for e in audit.listar("usuario")]
+    assert {"crear_usuario", "desactivar_usuario", "reactivar_usuario", "cambiar_rol_usuario"} <= set(acciones)
+
+
+def test_no_se_puede_dejar_el_sistema_sin_administradores(api_admin):
+    c = api_admin
+    c.post("/api/v1/usuarios", json={"usuario": "ana", "rol": "administrador", "clave": CLAVE})
+    assert c.post("/api/v1/usuarios/ana/desactivar", json={}).status_code == 422
+    assert c.post("/api/v1/usuarios/ana/rol", json={"rol": "usuario"}).status_code == 422
+    assert auth._doc("ana")["activo"] is True and auth._doc("ana")["rol"] == "administrador"
+    c.post("/api/v1/usuarios", json={"usuario": "beto", "rol": "administrador", "clave": CLAVE})
+    assert c.post("/api/v1/usuarios/ana/rol", json={"rol": "usuario"}).status_code == 200      # ahora hay otro
+    assert c.post("/api/v1/usuarios/beto/desactivar", json={}).status_code == 422               # beto es el último
+    # un admin tampoco puede quitarse el rol a sí mismo si es el último
+    cliente = TestClient(app)
+    h = _bearer(_login(cliente, "beto").json()["token"])
+    assert cliente.post("/api/v1/usuarios/beto/rol", json={"rol": "usuario"}, headers=h).status_code == 422
+
+
+def test_responsable_de_usuarios_es_el_autenticado(api_admin):
+    c = api_admin
+    c.post("/api/v1/usuarios", json={"usuario": "ana", "rol": "administrador", "clave": CLAVE})
+    cliente = TestClient(app)
+    h = _bearer(_login(cliente, "ana").json()["token"])
+    r = cliente.post("/api/v1/usuarios", headers=h, json={"usuario": "luis", "rol": "usuario", "clave": CLAVE,
+                                                         "responsable": "otro"})
+    assert r.status_code == 201
+    assert audit.listar("usuario", "luis")[-1].responsable == "ana"
+
+
+def test_consulta_publica_expone_estado_y_atencion_solo_en_plan_sin_datos_operativos():
+    from models.schemas import Parada
+    c = TestClient(app)
+    codigo = c.post("/api/v1/publico/reportes", json={"texto": "Sin agua en Chame hace 2 dias, 40 personas"}).json()["codigo_seguimiento"]
+    rep = next(x for x in workflow.listar_reportes() if x.codigo_seguimiento == codigo)
+    workflow.corregir_y_confirmar(rep.id, "t", "Chame", 48, 40, "alta", None)
+    g = c.get(f"/api/v1/publico/reportes/{codigo}").json()
+    assert g["estado"] == "confirmado" and g["atencion"] is None
+    # forzamos el estado en_plan y una misión con parada para este reporte (sin pasar por el planificador)
+    d = db.obtener("reportes", rep.id)
+    db.actualizar("reportes", rep.id, {**d, "estado": "en_plan"})
+    assert c.get(f"/api/v1/publico/reportes/{codigo}").json()["atencion"] == {"mision_asignada": False, "entrega_registrada": False}
+    m = workflow.crear_mision("CIS-001", [Parada(orden=1, sector="Chame", litros=500, reporte_ids=[rep.id])], "t")
+    assert c.get(f"/api/v1/publico/reportes/{codigo}").json()["atencion"] == {"mision_asignada": True, "entrega_registrada": False}
+    md = db.obtener("misiones", m.id)
+    md["paradas"][0]["estado"] = "entregada"
+    db.actualizar("misiones", m.id, md)
+    r = c.get(f"/api/v1/publico/reportes/{codigo}")
+    assert r.json()["atencion"] == {"mision_asignada": True, "entrega_registrada": True}
+    for prohibido in ("CIS-", "litros", "500", "lat", "lng", "horas"):
+        assert prohibido not in json.dumps(r.json()["atencion"]) and prohibido not in r.text.replace("tiene_ubicacion", "")
+
+
+def test_cargar_datos_demo_usa_siempre_reglas_locales_sin_llamar_a_la_ia(monkeypatch):
+    from services import ingest
+    llamadas = []
+
+    def prohibido(self, *a, **k):
+        llamadas.append(1)
+        raise AssertionError("cargar_datos_demo no debe invocar a la IA")
+    monkeypatch.setenv("AI_PROVIDER", "gemini")
+    monkeypatch.setenv("GEMINI_API_KEY", "clave-falsa-de-prueba")
+    monkeypatch.setattr(ingest.InterpreteGemini, "extraer", prohibido)
+    n = workflow.cargar_datos_demo("t")["reportes"]
+    assert n > 10 and llamadas == []
+    assert {r.interprete for r in workflow.listar_reportes()} == {"reglas"}
+    # control negativo: fuera de la carga sí se usa el proveedor configurado (y cae al fallback visible)
+    r = workflow.crear_reporte("Sin agua en Chame control negativo")
+    assert llamadas == [1] and r.interprete == "reglas(fallback)"
+    assert ingest.solo_local.get() is False

@@ -16,54 +16,91 @@ AUTENTICACIÓN Y ROLES
   - Terminales por vehículo (ESP32-S3): `X-Device-Token` (token propio de la cisterna, solo se guarda su SHA-256) en
     /dispositivo/mision, /dispositivo/eventos y /dispositivo/latido. La identidad (cisterna_id) sale del token, nunca del
     cuerpo. Límite de tasa y bloqueo suave por IP tras intentos fallidos. Un token de vehículo no sirve en rutas admin.
-  - Públicos (sin credenciales, con límite de tasa por IP): /salud, /publico/*, /auth/login.
-  - CORS no está habilitado. Los errores no incluyen trazas ni detalles internos.
+  - Públicos (sin credenciales, con límite de tasa por origen): /salud, /publico/*, /auth/login (solo AUTH=local).
+  - HIDRO360_AUTH=supabase: `Authorization: Bearer <JWT de Supabase>`; el rol sale de la tabla `usuarios`.
+  - SIN ESTADO LOCAL: sesiones, límites y bloqueos viven en la base; la API puede ejecutarse en varias instancias.
+  - CORS: solo los orígenes de HIDRO360_CORS_ORIGINS (ninguno por defecto). Los errores no incluyen trazas ni detalles internos.
   - El actor autenticado prevalece sobre el `responsable` del cuerpo (opcional): no se puede firmar como otro.
 """
 
 import hmac
-import time
+import ipaddress
+import json
+import os
 from typing import Any, Callable, Dict, List, Optional
 
 from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse, Response
 from pydantic import BaseModel, ConfigDict, Field
 
 import config
 from models.schemas import (AccionDecision, Asignacion, Cisterna, ConfirmacionDispositivo, Dispositivo,
                             EstadoActual, Mision, Parada, PropuestaPlan, RegistroEvento, Reporte, SCHEMA_VERSION)
-from services import audit, auth, tracing, workflow
+from services import audit, auth, limites, tracing, workflow
 from services.auth import Actor, ErrorAutenticacion, ErrorAutorizacion, Rol
-from services.workflow import ErrorDeNegocio, ErrorLimite
+from services.limites import ErrorLimite
+from services.workflow import ErrorDeNegocio
 
-app = FastAPI(title="HIDRO360 - API local", version=SCHEMA_VERSION)
+app = FastAPI(title="HIDRO360 - API", version=SCHEMA_VERSION,
+              docs_url=None if config.ENTORNO() == "prod" else "/docs",
+              redoc_url=None, openapi_url=None if config.ENTORNO() == "prod" else "/openapi.json")
 LOCAL = {"127.0.0.1", "::1", "localhost", "testclient"}
 ACTOR_SERVICIO = Actor(usuario="api-operador", rol=Rol.ADMIN, origen="servicio")
 
-# Límite de tasa del login por IP (además del bloqueo por usuario de services.auth).
-_LOGIN_MAX, _LOGIN_VENTANA = 10, 60
-_login_intentos: Dict[str, List[float]] = {}
+# Versión del protocolo terminal <-> servidor (GET /dispositivo/mision y /dispositivo/latido la devuelven). El firmware
+# compara este entero con el que espera y avisa si son incompatibles. Súbalo ante un cambio NO retrocompatible.
+PROTOCOLO_TERMINAL = 1
 
+# Límites (TODOS persistidos en la base vía services/limites.py; ningún contador vive en el proceso).
+_LOGIN_MAX, _LOGIN_VENTANA = 10, 60                      # intentos de login por origen
+_DISP_MAX, _DISP_VENTANA = 240, 60                       # peticiones de terminal por origen
+_DISP_FALLOS_MAX, _DISP_FALLOS_VENTANA = 10, 300         # fallos de token de terminal => bloqueo
+_CRED_FALLOS_MAX, _CRED_FALLOS_VENTANA = 20, 300         # credenciales admin inválidas por origen
 
-# Terminales: límite general por IP y bloqueo suave tras fallos de token.
-_DISP_MAX, _DISP_VENTANA = 240, 60
-_DISP_FALLOS_MAX, _DISP_FALLOS_VENTANA = 10, 300
-_disp_peticiones: Dict[str, List[float]] = {}
-_disp_fallos: Dict[str, List[float]] = {}
-
-# Tamaño máximo de cuerpo aceptado (3 fotos de 3 MB en base64 caben con holgura). Se comprueba Content-Length.
+# Tamaño máximo de cuerpo aceptado (3 fotos de 3 MB en base64 caben con holgura). Se comprueba Content-Length Y los
+# bytes realmente recibidos (cuerpos sin Content-Length o con uno falso).
 MAX_CUERPO_BYTES = 16 * 1024 * 1024
 
 
 def reiniciar_limites() -> None:
-    """Pruebas."""
-    _login_intentos.clear()
-    _disp_peticiones.clear()
-    _disp_fallos.clear()
+    """Pruebas: borra contadores de tasa, bloqueos y sesiones de la base activa."""
+    auth.reiniciar_estado()
+
+
+def _flag(nombre: str) -> bool:
+    return os.environ.get(nombre, "").strip().lower() in ("1", "true", "yes", "si", "sí")
+
+
+def _confiar_proxy() -> bool:
+    """Solo se leen cabeceras de proxy (X-Forwarded-For) si estamos en producción Y se declara un proxy de confianza
+    (HIDRO360_TRUST_PROXY=1, o Vercel, que pone VERCEL=1 y reescribe X-Forwarded-For). Fuera de ese caso el cliente
+    puede falsificarlas, así que se ignoran y el origen es la dirección del socket."""
+    return config.ENTORNO() == "prod" and (_flag("HIDRO360_TRUST_PROXY") or os.environ.get("VERCEL") == "1")
 
 
 def _ip(request: Request) -> str:
-    return request.client.host if request.client else "desconocido"
+    """Origen del cliente para límites. Con proxy de confianza: la entrada de X-Forwarded-For que añadió el
+    último proxy de confianza (HIDRO360_PROXY_SALTOS desde la derecha, 1 por defecto: en Vercel es la IP real, porque
+    la plataforma sobrescribe la cabecera); si no, x-real-ip. Valores que no sean IP se descartan."""
+    directo = request.client.host if request.client else "desconocido"
+    if not _confiar_proxy():
+        return directo
+    try:
+        saltos = max(1, int(os.environ.get("HIDRO360_PROXY_SALTOS", "1")))
+    except ValueError:
+        saltos = 1
+    candidatos: List[str] = []
+    xff = [x.strip() for x in request.headers.get("x-forwarded-for", "").split(",") if x.strip()]
+    if len(xff) >= saltos:
+        candidatos.append(xff[-saltos])
+    candidatos.append(request.headers.get("x-real-ip", "").strip())
+    for c in candidatos:
+        try:
+            return str(ipaddress.ip_address(c))
+        except ValueError:
+            continue
+    return directo
 
 
 # ------------------------------------------------------------ autenticación (dependencias)
@@ -78,19 +115,37 @@ def _token_servicio_valido(token: Optional[str]) -> bool:
     return bool(esperado and token and hmac.compare_digest(token, esperado))
 
 
-def credencial(authorization: Optional[str] = Header(None),
+def _credencial_invalida(request: Request, mensaje: str) -> ErrorAutenticacion:
+    """Registra un fallo de credenciales por origen. Pasado el umbral la respuesta pasa a 429 (una credencial VÁLIDA
+    nunca se bloquea: este camino solo se ejecuta con credenciales inválidas)."""
+    clave = "cred:" + _ip(request)
+    if limites.bloqueado(clave):
+        raise ErrorLimite("Demasiados intentos fallidos. Espere unos minutos.")
+    limites.fallo(clave, _CRED_FALLOS_MAX, _CRED_FALLOS_VENTANA)
+    return ErrorAutenticacion(mensaje)
+
+
+def credencial(request: Request, authorization: Optional[str] = Header(None),
                x_api_token: Optional[str] = Header(None)) -> Optional[Actor]:
-    """Actor de la petición o None si no trae credenciales. Credenciales presentes pero inválidas → 401."""
+    """Actor de la petición o None si no trae credenciales. Credenciales presentes pero inválidas → 401.
+    HIDRO360_AUTH=local: Bearer = sesión propia. HIDRO360_AUTH=supabase: Bearer = JWT de Supabase (ver
+    services/auth_supabase.py; sin perfil o desactivado → 403). El token de servicio X-API-Token vale en ambos modos."""
     bearer = _bearer(authorization)
     if bearer:
+        if config.AUTH_BACKEND() == "supabase":
+            from services import auth_supabase
+            try:
+                return auth_supabase.actor_de_jwt(bearer)
+            except ErrorAutenticacion as e:
+                raise _credencial_invalida(request, str(e))
         a = auth.actor_de_token(bearer)
         if a is None:
-            raise ErrorAutenticacion("Sesión inválida o expirada.")
+            raise _credencial_invalida(request, "Sesión inválida o expirada.")
         return a
     if x_api_token:
         if _token_servicio_valido(x_api_token):
             return ACTOR_SERVICIO
-        raise ErrorAutenticacion("Credenciales inválidas.")
+        raise _credencial_invalida(request, "Credenciales inválidas.")
     return None
 
 
@@ -121,25 +176,16 @@ def dispositivo_u_operador(request: Request, x_api_token: Optional[str] = Header
     return _autenticar_dispositivo(request, x_api_token, [config.API_TOKEN(), config.DEVICE_TOKEN()])
 
 
-def _recientes(tabla: Dict[str, List[float]], clave: str, ventana: float) -> List[float]:
-    ahora = time.monotonic()
-    r = [t for t in tabla.get(clave, []) if ahora - t < ventana]
-    tabla[clave] = r
-    return r
-
-
 def terminal(request: Request, x_device_token: Optional[str] = Header(None)) -> Dispositivo:
-    """Autentica la terminal de un vehículo por su token propio. Devuelve el Dispositivo (la cisterna sale de aquí)."""
+    """Autentica la terminal de un vehículo por su token propio. Devuelve el Dispositivo (la cisterna sale de aquí).
+    Límite general y bloqueo tras fallos de token por origen, ambos en la base (valen entre instancias)."""
     ip = _ip(request)
-    if len(_recientes(_disp_fallos, ip, _DISP_FALLOS_VENTANA)) >= _DISP_FALLOS_MAX:
+    if limites.bloqueado("disp:" + ip):
         raise ErrorLimite("Demasiados intentos fallidos. Espere unos minutos.")
-    pet = _recientes(_disp_peticiones, ip, _DISP_VENTANA)
-    if len(pet) >= _DISP_MAX:
-        raise ErrorLimite("Demasiadas solicitudes.")
-    pet.append(time.monotonic())
+    limites.limitar("dispositivo:" + ip, _DISP_MAX, _DISP_VENTANA, "Demasiadas solicitudes.")
     d = workflow.autenticar_dispositivo(x_device_token)
     if d is None:
-        _disp_fallos[ip].append(time.monotonic())
+        limites.fallo("disp:" + ip, _DISP_FALLOS_MAX, _DISP_FALLOS_VENTANA)
         raise ErrorAutenticacion("Token de dispositivo inválido o ausente (cabecera X-Device-Token).")
     return d
 
@@ -177,20 +223,105 @@ def _error_negocio(request: Request, e: ErrorDeNegocio):
     return JSONResponse(status_code=codigo, content={"detail": msg})
 
 
-@app.middleware("http")
-async def _limite_cuerpo(request: Request, call_next):
-    try:
-        largo = int(request.headers.get("content-length") or 0)
-    except ValueError:
-        largo = 0
-    if largo > MAX_CUERPO_BYTES:
-        return JSONResponse(status_code=413, content={"detail": "El envío es demasiado grande."})
-    return await call_next(request)
+@app.exception_handler(RequestValidationError)
+def _error_validacion(request: Request, e: RequestValidationError):
+    """Mismo formato de FastAPI (detail = lista) pero SIN el valor recibido (`input`): un 422 en /auth/login no debe
+    devolver la contraseña que se envió."""
+    detalle = [{"loc": list(x.get("loc", [])), "msg": x.get("msg", ""), "type": x.get("type", "")} for x in e.errors()]
+    return JSONResponse(status_code=422, content={"detail": detalle})
 
 
 @app.exception_handler(Exception)
 def _error_interno(request: Request, e: Exception):
     return JSONResponse(status_code=500, content={"detail": "Error interno."})
+
+
+class _CuerpoGrande(BaseException):
+    pass
+
+
+class CapaSeguridad:
+    """Middleware ASGI puro: (1) tamaño máximo de cuerpo, también sin Content-Length (se cuentan los bytes reales);
+    (2) CORS por lista blanca exacta (config.CORS_ORIGINS(), ninguno por defecto; el comodín se ignora y nunca se
+    envían credenciales de cookie: la autenticación va en cabeceras); (3) cabeceras de seguridad."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+        cab = {k.decode("latin-1").lower(): v.decode("latin-1") for k, v in scope["headers"]}
+        origen = cab.get("origin")
+        permitido = bool(origen) and origen != "*" and origen in config.CORS_ORIGINS()
+        if scope["method"] == "OPTIONS" and origen and "access-control-request-method" in cab:   # preflight
+            extra = {}
+            if permitido:
+                extra = {"access-control-allow-origin": origen, "vary": "Origin",
+                         "access-control-allow-methods": "GET, POST, PUT, DELETE",
+                         "access-control-allow-headers": "Authorization, Content-Type, X-API-Token",
+                         "access-control-max-age": "600"}
+            await self._responder(send, 204 if permitido else 403, b"", extra)
+            return
+        try:
+            if int(cab.get("content-length") or 0) > MAX_CUERPO_BYTES:
+                raise ValueError
+        except ValueError:
+            await self._responder(send, 413, b'{"detail":"El env\\u00edo es demasiado grande."}', {})
+            return
+        recibido = 0
+        iniciada = False
+
+        async def recibir():
+            nonlocal recibido
+            msg = await receive()
+            if msg["type"] == "http.request":
+                recibido += len(msg.get("body", b""))
+                if recibido > MAX_CUERPO_BYTES:
+                    raise _CuerpoGrande()
+            return msg
+
+        async def enviar(msg):
+            nonlocal iniciada
+            if msg["type"] == "http.response.start":
+                iniciada = True
+                h = list(msg.get("headers", []))
+                presentes = {k.decode("latin-1").lower() for k, _ in h}
+                for k, v in self._cabeceras(permitido, origen).items():
+                    if k not in presentes:
+                        h.append((k.encode("latin-1"), v.encode("latin-1")))
+                msg = {**msg, "headers": h}
+            await send(msg)
+
+        try:
+            await self.app(scope, recibir, enviar)
+        except _CuerpoGrande:
+            if iniciada:
+                raise
+            await self._responder(send, 413, b'{"detail":"El env\\u00edo es demasiado grande."}', {})
+
+    @staticmethod
+    def _cabeceras(permitido: bool, origen: Optional[str]) -> Dict[str, str]:
+        h = {"x-content-type-options": "nosniff", "referrer-policy": "no-referrer", "x-frame-options": "DENY",
+             "content-security-policy": "frame-ancestors 'none'", "cache-control": "no-store",
+             "permissions-policy": "geolocation=(), camera=(), microphone=()"}
+        if config.ENTORNO() == "prod":
+            h["strict-transport-security"] = "max-age=31536000; includeSubDomains"
+        if permitido:
+            h["access-control-allow-origin"] = origen or ""
+            h["vary"] = "Origin"
+        return h
+
+    async def _responder(self, send, estado: int, cuerpo: bytes, extra: Dict[str, str]):
+        cab = {"content-type": "application/json", "content-length": str(len(cuerpo)),
+               **self._cabeceras(False, None), **extra}
+        await send({"type": "http.response.start", "status": estado,
+                    "headers": [(k.encode("latin-1"), v.encode("latin-1")) for k, v in cab.items()]})
+        await send({"type": "http.response.body", "body": cuerpo})
+
+
+app.add_middleware(CapaSeguridad)
 
 
 # ---------------------------------------------------------------- modelos de entrada
@@ -299,6 +430,24 @@ class CancelacionMision(_Cuerpo):
     responsable: Optional[str] = Field(None, min_length=1)
 
 
+class UsuarioNuevo(_Cuerpo):
+    """Local: `usuario` = nombre y `clave` obligatoria. Supabase: `usuario` = correo, sin clave."""
+    usuario: str = Field(min_length=3, max_length=120)
+    rol: str = "usuario"
+    clave: Optional[str] = Field(None, max_length=200)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class CambioRol(_Cuerpo):
+    rol: str = Field(min_length=1, max_length=20)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
+class BorradoFoto(_Cuerpo):
+    motivo: str = Field(min_length=1, max_length=300)
+    responsable: Optional[str] = Field(None, min_length=1)
+
+
 class LoteEventos(BaseModel):
     """Cada evento se valida por separado en el backend: uno defectuoso no bloquea la cola de la terminal."""
     eventos: List[Dict[str, Any]] = Field(max_length=workflow.MAX_EVENTOS_LOTE)
@@ -324,21 +473,24 @@ def _doble(metodo: str, ruta: str, alias: str, **kw):
 
 @app.get("/api/v1/salud")
 def salud():
+    """Sin secretos ni URLs: solo modos de funcionamiento."""
     return {"ok": True, "schema_version": SCHEMA_VERSION, "version": config.APP_VERSION,
-            "proveedor_ia": config.ai_provider()}
+            "proveedor_ia": config.ai_provider(),
+            "persistencia": "postgres" if config.modo_postgres() else "sqlite",
+            "autenticacion": "supabase" if config.AUTH_BACKEND() == "supabase" else "local",
+            "almacenamiento_fotos": "supabase" if config.STORAGE_BACKEND() == "supabase" else "local",
+            "protocolo_terminal": PROTOCOLO_TERMINAL}
 
 
 # --- autenticación
 @app.post("/api/v1/auth/login")
 def login(c: Credenciales, request: Request):
-    ahora = time.monotonic()
-    ip = _ip(request)
-    recientes = [t for t in _login_intentos.get(ip, []) if ahora - t < _LOGIN_VENTANA]
-    if len(recientes) >= _LOGIN_MAX:
-        _login_intentos[ip] = recientes
-        raise ErrorLimite("Demasiados intentos. Espere un minuto e inténtelo de nuevo.")
-    recientes.append(ahora)
-    _login_intentos[ip] = recientes
+    """Solo con HIDRO360_AUTH=local. Con HIDRO360_AUTH=supabase el login local queda DESHABILITADO (410): la
+    persona inicia sesión en Supabase Auth y envía su JWT como `Authorization: Bearer`."""
+    if config.AUTH_BACKEND() == "supabase":
+        raise HTTPException(410, "El inicio de sesión local está deshabilitado: use Supabase Auth.")
+    limites.limitar("loginip:" + _ip(request), _LOGIN_MAX, _LOGIN_VENTANA,
+                    "Demasiados intentos. Espere un minuto e inténtelo de nuevo.")
     token = auth.iniciar_sesion(c.usuario, c.clave)  # ErrorAutenticacion genérico → 401
     a = auth.actor_de_token(token)
     return {"token": token, "rol": a.rol.value, "expira_horas": auth.SESION_HORAS}
@@ -346,7 +498,10 @@ def login(c: Credenciales, request: Request):
 
 @app.post("/api/v1/auth/logout")
 def logout(authorization: Optional[str] = Header(None), actor: Actor = Depends(autenticado)):
-    auth.cerrar_sesion(_bearer(authorization))
+    """Local: revoca la sesión. Supabase: el JWT es sin estado; cierre la sesión en el cliente de Supabase (y
+    desactive la cuenta si necesita revocación inmediata)."""
+    if config.AUTH_BACKEND() != "supabase":
+        auth.cerrar_sesion(_bearer(authorization))
     return {"ok": True}
 
 
@@ -500,6 +655,38 @@ def foto(reporte_id: int, foto_id: str, actor: Actor = Depends(admin)):
         "Content-Security-Policy": "default-src 'none'; sandbox"})
 
 
+@app.post("/api/v1/reportes/{reporte_id}/fotos/{foto_id}/eliminar", response_model=Reporte)
+def eliminar_foto(reporte_id: int, foto_id: str, body: BorradoFoto, actor: Actor = Depends(admin)):
+    """Borrado controlado (archivo + metadatos + referencia), con motivo y auditoría."""
+    return _ejecutar(actor, workflow.eliminar_foto, reporte_id, foto_id, body.motivo, body.responsable or "")
+
+
+# --- usuarios (administración)
+@app.get("/api/v1/usuarios")
+def listar_usuarios(actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.listar_usuarios_admin)
+
+
+@app.post("/api/v1/usuarios", status_code=201)
+def crear_usuario(body: UsuarioNuevo, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.crear_usuario_admin, body.usuario, body.rol, body.clave, body.responsable or "")
+
+
+@app.post("/api/v1/usuarios/{usuario}/desactivar")
+def desactivar_usuario(usuario: str, body: AccionDispositivo = AccionDispositivo(), actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.desactivar_usuario, usuario, body.responsable or "")
+
+
+@app.post("/api/v1/usuarios/{usuario}/reactivar")
+def reactivar_usuario(usuario: str, body: AccionDispositivo = AccionDispositivo(), actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.reactivar_usuario, usuario, body.responsable or "")
+
+
+@app.post("/api/v1/usuarios/{usuario}/rol")
+def cambiar_rol(usuario: str, body: CambioRol, actor: Actor = Depends(admin)):
+    return _ejecutar(actor, workflow.cambiar_rol_usuario, usuario, body.rol, body.responsable or "")
+
+
 # --- dispositivos por vehículo (administración)
 def _dispositivo_json(d: Dispositivo) -> Dict[str, Any]:
     return d.model_dump(mode="json")
@@ -571,7 +758,8 @@ def mapa(actor: Actor = Depends(admin)):
 # --- terminal del vehículo (X-Device-Token propio; la cisterna sale del token)
 @app.get("/api/v1/dispositivo/mision")
 def terminal_mision(d: Dispositivo = Depends(terminal)):
-    return _ejecutar(None, workflow.dispositivo_mision_activa, d.cisterna_id)
+    res = _ejecutar(None, workflow.dispositivo_mision_activa, d.cisterna_id)
+    return {**res, "protocolo": PROTOCOLO_TERMINAL}
 
 
 @app.post("/api/v1/dispositivo/eventos")
@@ -581,8 +769,9 @@ def terminal_eventos(body: LoteEventos, d: Dispositivo = Depends(terminal)):
 
 @app.post("/api/v1/dispositivo/latido")
 def terminal_latido(body: Latido, d: Dispositivo = Depends(terminal)):
-    return _ejecutar(None, workflow.dispositivo_latido, d.cisterna_id, body.firmware, body.wifi_rssi,
-                     body.pendientes, body.uptime_s)
+    res = _ejecutar(None, workflow.dispositivo_latido, d.cisterna_id, body.firmware, body.wifi_rssi,
+                    body.pendientes, body.uptime_s)
+    return {**res, "protocolo": PROTOCOLO_TERMINAL}
 
 
 # --- rutas de IA (api/rutas_ia.py las define; se montan aquí con la dependencia de administrador)
